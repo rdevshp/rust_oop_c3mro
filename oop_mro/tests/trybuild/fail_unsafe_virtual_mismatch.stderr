@@ -1,0 +1,5 @@
+error: method `read` does not satisfy the virtual signature declared in `Device`
+  --> tests/trybuild/fail_unsafe_virtual_mismatch.rs:12:20
+   |
+12 |         virtual fn read(&self) -> usize {
+   |                    ^^^^

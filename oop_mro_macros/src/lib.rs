@@ -717,12 +717,6 @@ fn analyze_method(owner: usize, method: &MethodDef) -> Result<MethodInfo, Vec<Er
             "async methods are not supported",
         ));
     }
-    if sig.unsafety.is_some() {
-        errors.push(Error::new_spanned(
-            sig.unsafety,
-            "unsafe methods are not supported",
-        ));
-    }
     if sig.abi.is_some() {
         errors.push(Error::new_spanned(
             &sig.abi,
@@ -799,7 +793,15 @@ fn analyze_method(owner: usize, method: &MethodDef) -> Result<MethodInfo, Vec<Er
         ReturnType::Default => String::new(),
         ReturnType::Type(_, ty) => ty.to_token_stream().to_string(),
     };
-    let signature_key = format!("{receiver:?}|{}|{output}", arg_type_keys.join(","));
+    let unsafety = if sig.unsafety.is_some() {
+        "unsafe"
+    } else {
+        "safe"
+    };
+    let signature_key = format!(
+        "{unsafety}|{receiver:?}|{}|{output}",
+        arg_type_keys.join(",")
+    );
     let signature_display = sig.to_token_stream().to_string();
 
     Ok(MethodInfo {
@@ -1372,9 +1374,10 @@ fn generate_vtable_struct(graph: &Graph, index: usize, class: &ClassDef) -> Toke
         };
         let arg_types = &method.arg_types;
         let output = &method.sig.output;
+        let unsafety = &method.sig.unsafety;
 
         quote! {
-            #field: fn(#receiver #(, #arg_types)*) #output
+            #field: #unsafety fn(#receiver #(, #arg_types)*) #output
         }
     });
 
@@ -1569,6 +1572,7 @@ fn generate_vtable_function(
     let arg_idents = &method.arg_idents;
     let arg_types = &method.arg_types;
     let output = &method.sig.output;
+    let unsafety = &method.sig.unsafety;
     let method_name = method.name.to_string();
     let vtable_class_name = &graph.names[vtable_index];
 
@@ -1581,8 +1585,14 @@ fn generate_vtable_function(
             let body = if let Some(selected) = selected {
                 let complete =
                     complete_from_receiver_expr(graph, class_index, &vtable_slot.path, false);
-                let call =
-                    selected_virtual_impl_call(graph, class_index, selected, false, arg_idents);
+                let call = selected_virtual_impl_call(
+                    graph,
+                    class_index,
+                    selected,
+                    false,
+                    arg_idents,
+                    selected.sig.unsafety.is_some(),
+                );
                 quote! {
                     let complete = #complete;
                     #call
@@ -1594,7 +1604,7 @@ fn generate_vtable_function(
             };
 
             quote! {
-                fn #function(receiver: &#receiver_ty #(, #arg_idents: #arg_types)*) #output {
+                #unsafety fn #function(receiver: &#receiver_ty #(, #arg_idents: #arg_types)*) #output {
                     #body
                 }
             }
@@ -1603,8 +1613,14 @@ fn generate_vtable_function(
             let body = if let Some(selected) = selected {
                 let complete =
                     complete_from_receiver_expr(graph, class_index, &vtable_slot.path, true);
-                let call =
-                    selected_virtual_impl_call(graph, class_index, selected, true, arg_idents);
+                let call = selected_virtual_impl_call(
+                    graph,
+                    class_index,
+                    selected,
+                    true,
+                    arg_idents,
+                    selected.sig.unsafety.is_some(),
+                );
                 quote! {
                     let complete = #complete;
                     #call
@@ -1616,7 +1632,7 @@ fn generate_vtable_function(
             };
 
             quote! {
-                fn #function(receiver: &mut #receiver_ty #(, #arg_idents: #arg_types)*) #output {
+                #unsafety fn #function(receiver: &mut #receiver_ty #(, #arg_idents: #arg_types)*) #output {
                     #body
                 }
             }
@@ -1659,11 +1675,17 @@ fn selected_virtual_impl_call(
     selected: &MethodInfo,
     mutable: bool,
     arg_idents: &[Ident],
+    wrap_unsafe: bool,
 ) -> TokenStream2 {
     let method = virtual_impl_ident(&selected.name);
     if selected.owner == class_index {
-        return quote! {
+        let call = quote! {
             complete.#method(#(#arg_idents),*)
+        };
+        return if wrap_unsafe {
+            quote! { unsafe { #call } }
+        } else {
+            call
         };
     }
 
@@ -1674,8 +1696,13 @@ fn selected_virtual_impl_call(
         format_ident!("__oop_as_{}", owner_name)
     };
 
-    quote! {
+    let call = quote! {
         complete.#accessor().#method(#(#arg_idents),*)
+    };
+    if wrap_unsafe {
+        quote! { unsafe { #call } }
+    } else {
+        call
     }
 }
 
@@ -1906,10 +1933,20 @@ fn generate_virtual_wrapper(method: &MethodInfo) -> TokenStream2 {
     let vis = &method.vis;
     let field = vtable_field_ident(&method.name);
     let args = &method.arg_idents;
+    let call = quote! {
+        (self.__oop_vtable.#field)(self, #(#args),*)
+    };
+    let body = if method.sig.unsafety.is_some() {
+        quote! {
+            unsafe { #call }
+        }
+    } else {
+        call
+    };
 
     quote! {
         #vis #sig {
-            (self.__oop_vtable.#field)(self, #(#args),*)
+            #body
         }
     }
 }

@@ -94,6 +94,13 @@ oop_class! {
 }
 
 
+oop_class! {
+    class Test {
+        virtual unsafe fn f(&self) {
+            unsafe {}
+        }
+    }
+}
 
 fn main() {
     let dog = Dog::new(String::from("Dog1"));

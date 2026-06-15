@@ -145,6 +145,23 @@ oop_class! {
                 .push(format!("dog:{label}"));
         }
     }
+
+    class UnsafeBase {
+        unsafe fn direct_secret(&self) -> usize {
+            3
+        }
+
+        virtual unsafe fn code(&self) -> usize {
+            11
+        }
+    }
+
+    class UnsafeChild: UnsafeBase {
+        #[override]
+        virtual unsafe fn code(&self) -> usize {
+            29
+        }
+    }
 }
 
 #[test]
@@ -264,4 +281,15 @@ fn constructors_dispatch_virtual_methods_through_complete_object() {
         dog.as_constructed_animal().events(),
         vec!["dog:base".to_string(), "dog:derived".to_string()]
     );
+}
+
+#[test]
+fn supports_unsafe_direct_and_virtual_methods() {
+    let child = UnsafeChild::default();
+
+    unsafe {
+        assert_eq!(child.as_unsafe_base().direct_secret(), 3);
+        assert_eq!(child.code(), 29);
+        assert_eq!(child.as_unsafe_base().code(), 29);
+    }
 }
