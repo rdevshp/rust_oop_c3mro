@@ -1,5 +1,5 @@
 [package]
-name = "oop_mro_playground"
+name = "oop_mro_examples"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
