@@ -1,0 +1,26 @@
+error[E0277]: the trait bound `dyn AsAnimal: OopBoxDowncastTarget<dyn AsVehicle>` is not satisfied
+  --> tests/trybuild/fail_downcast_unrelated.rs:26:20
+   |
+26 |     let _ = animal.downcast::<dyn AsVehicle>();
+   |                    ^^^^^^^^ the trait `OopBoxDowncastTarget<dyn AsVehicle>` is not implemented for `dyn AsAnimal`
+   |
+help: the trait `OopBoxDowncastTarget<dyn AsVehicle>` is not implemented for `dyn AsAnimal`
+      but trait `OopBoxDowncastTarget<(dyn AsDog + 'static)>` is implemented for `(dyn AsAnimal + 'static)`
+  --> tests/trybuild/fail_downcast_unrelated.rs:3:1
+   |
+ 3 | / oop_class! {
+ 4 | |     class Animal {
+ 5 | |         virtual fn speak(&self) -> &'static str {
+ 6 | |             "animal"
+...  |
+22 | | }
+   | |_^
+note: required by a bound in `downcast`
+  --> src/lib.rs
+   |
+   |     fn downcast<Target: ?Sized>(self: Box<Self>) -> Result<Box<Target>, Box<Self>>
+   |        -------- required by a bound in this associated function
+   |     where
+   |         Self: OopBoxDowncastTarget<Target>,
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `OopBoxDowncast::downcast`
+   = note: this error originates in the macro `oop_class` (in Nightly builds, run with -Z macro-backtrace for more info)

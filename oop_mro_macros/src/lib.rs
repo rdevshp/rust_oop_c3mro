@@ -1450,6 +1450,7 @@ impl Parse for SuperCallInput {
 }
 
 fn generate(graph: &Graph) -> TokenStream2 {
+    let private_module = generate_private_module(graph);
     let vtable_structs = graph
         .classes
         .iter()
@@ -1473,14 +1474,27 @@ fn generate(graph: &Graph) -> TokenStream2 {
         .map(|(index, class)| generate_impls(graph, index, class));
     let base_cast_impls = generate_base_cast_impls(graph);
     let vtable_items = generate_vtable_items(graph);
+    let downcast_impls = generate_downcast_impls(graph);
 
     quote! {
+        #private_module
         #(#vtable_structs)*
         #(#structs)*
         #(#base_cast_traits)*
         #(#impls)*
         #base_cast_impls
         #vtable_items
+        #downcast_impls
+    }
+}
+
+fn generate_private_module(graph: &Graph) -> TokenStream2 {
+    let module = private_module_ident(graph);
+
+    quote! {
+        mod #module {
+            pub struct Seal;
+        }
     }
 }
 
@@ -1568,6 +1582,8 @@ fn generate_vtable_struct(graph: &Graph, index: usize, class: &ClassDef) -> Toke
     let vtable_name = vtable_ident(&graph.names[index]);
     let generics = &class.generics;
     let class_ty = class_type_tokens(class);
+    let cast_ref = vtable_cast_ref_field_ident();
+    let cast_mut = vtable_cast_mut_field_ident();
     let fields = interface_methods(graph, index).into_iter().map(|method| {
         let field = vtable_field_ident(&method.name);
         let unsafety = &method.sig.unsafety;
@@ -1605,6 +1621,9 @@ fn generate_vtable_struct(graph: &Graph, index: usize, class: &ClassDef) -> Toke
 
     quote! {
         struct #vtable_name #generics {
+            __oop_complete_class_id: usize,
+            #cast_ref: unsafe fn(*const #class_ty, usize) -> ::core::option::Option<*const ()>,
+            #cast_mut: unsafe fn(*mut #class_ty, usize) -> ::core::option::Option<*mut ()>,
             #(#fields,)*
         }
     }
@@ -1701,6 +1720,7 @@ impl VisitMut for ElidedReferenceLifetimeBinder<'_> {
 fn generate_base_cast_trait(graph: &Graph, index: usize, class: &ClassDef) -> TokenStream2 {
     let vis = public_if_inherited(&class.vis);
     let trait_name = base_cast_trait_ident(&graph.names[index]);
+    let private_module = private_module_ident(graph);
     let (trait_generics, _, where_clause) = class.generics.split_for_impl();
     let class_ty = class_type_tokens(class);
     let shared_name = base_cast_method_ident(&graph.names[index], false);
@@ -1723,6 +1743,12 @@ fn generate_base_cast_trait(graph: &Graph, index: usize, class: &ClassDef) -> To
         #vis trait #trait_name #trait_generics #supertrait_bound #where_clause {
             fn #shared_name(&self) -> &#class_ty;
             fn #mutable_name(&mut self) -> &mut #class_ty;
+
+            #[doc(hidden)]
+            fn __oop_complete_class_id(&self) -> usize;
+
+            #[doc(hidden)]
+            fn __oop_cast_seal(&self) -> #private_module::Seal;
         }
     }
 }
@@ -1768,6 +1794,7 @@ fn generate_base_cast_impl(
     } else {
         accessor_body(graph, class_index, base_index, true)
     };
+    let private_module = private_module_ident(graph);
 
     quote! {
         impl #impl_generics #trait_path for #class_ty #where_clause {
@@ -1777,6 +1804,263 @@ fn generate_base_cast_impl(
 
             fn #mutable_name(&mut self) -> &mut #base_ty {
                 #mutable_body
+            }
+
+            fn __oop_complete_class_id(&self) -> usize {
+                #class_index
+            }
+
+            fn __oop_cast_seal(&self) -> #private_module::Seal {
+                #private_module::Seal
+            }
+        }
+    }
+}
+
+fn generate_downcast_impls(graph: &Graph) -> TokenStream2 {
+    let box_impls = generate_box_downcast_impls(graph);
+    let borrowed_impls = generate_borrowed_downcast_impls(graph);
+
+    quote! {
+        #box_impls
+        #borrowed_impls
+    }
+}
+
+fn generate_box_downcast_impls(graph: &Graph) -> TokenStream2 {
+    let mut impls = Vec::new();
+
+    for source in 0..graph.classes.len() {
+        for target in 0..graph.classes.len() {
+            if source == target {
+                continue;
+            }
+            if !graph.mros[target].contains(&source) {
+                continue;
+            }
+
+            let candidates = graph
+                .classes
+                .iter()
+                .enumerate()
+                .filter(|(complete, class)| {
+                    !class.is_abstract
+                        && graph.mros[*complete].contains(&target)
+                        && compatible_owned_downcast_generics(graph, target, *complete)
+                })
+                .map(|(complete, _)| complete)
+                .collect::<Vec<_>>();
+            if candidates.is_empty() {
+                continue;
+            }
+
+            impls.push(generate_box_downcast_impl(
+                graph,
+                source,
+                target,
+                &candidates,
+            ));
+        }
+    }
+
+    quote! {
+        #(#impls)*
+    }
+}
+
+fn compatible_owned_downcast_generics(graph: &Graph, target: usize, complete: usize) -> bool {
+    if target == complete {
+        return true;
+    }
+
+    if graph.classes[target].generics.params.is_empty()
+        && graph.classes[complete].generics.params.is_empty()
+    {
+        return true;
+    }
+
+    generic_params_key(&graph.classes[target].generics)
+        == generic_params_key(&graph.classes[complete].generics)
+}
+
+fn generic_params_key(generics: &Generics) -> Vec<String> {
+    generics
+        .params
+        .iter()
+        .map(|param| match param {
+            GenericParam::Type(param) => param.ident.to_string(),
+            GenericParam::Lifetime(param) => param.lifetime.ident.to_string(),
+            GenericParam::Const(param) => param.ident.to_string(),
+        })
+        .collect()
+}
+
+fn generate_box_downcast_impl(
+    graph: &Graph,
+    source: usize,
+    target: usize,
+    candidates: &[usize],
+) -> TokenStream2 {
+    let class = &graph.classes[target];
+    let mut generics = class.generics.clone();
+    add_static_type_param_bounds(&mut generics);
+    let (impl_generics, _, where_clause) = generics.split_for_impl();
+    let source_ty = ancestor_type(graph, target, source);
+    let target_ty = class_type(&graph.classes[target]);
+    let source_trait = base_cast_trait_for_actual_class(graph, source, &source_ty);
+    let target_trait = base_cast_trait_for_actual_class(graph, target, &target_ty);
+    let arms = candidates.iter().copied().map(|complete| {
+        let complete_ty = class_type_tokens(&graph.classes[complete]);
+        quote! {
+            #complete => {
+                let raw = ::std::boxed::Box::into_raw(self);
+                let data = raw as *mut ();
+                let complete = unsafe {
+                    ::std::boxed::Box::from_raw(data as *mut #complete_ty)
+                };
+                let target: ::std::boxed::Box<dyn #target_trait> = complete;
+                ::core::result::Result::Ok(target)
+            }
+        }
+    });
+
+    quote! {
+        impl #impl_generics ::oop_mro::OopBoxDowncastTarget<dyn #target_trait>
+            for dyn #source_trait
+            #where_clause
+        {
+            fn downcast_target(
+                self: ::std::boxed::Box<Self>,
+            ) -> ::core::result::Result<
+                ::std::boxed::Box<dyn #target_trait>,
+                ::std::boxed::Box<Self>,
+            > {
+                match <dyn #source_trait as #source_trait>::__oop_complete_class_id(&*self) {
+                    #(#arms,)*
+                    _ => ::core::result::Result::Err(self),
+                }
+            }
+        }
+    }
+}
+
+fn add_static_type_param_bounds(generics: &mut Generics) {
+    let type_idents = generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            GenericParam::Type(param) => Some(param.ident.clone()),
+            GenericParam::Lifetime(_) | GenericParam::Const(_) => None,
+        })
+        .collect::<Vec<_>>();
+
+    let where_clause = generics.make_where_clause();
+    for ident in type_idents {
+        where_clause.predicates.push(parse_quote!(#ident: 'static));
+    }
+}
+
+fn generate_borrowed_downcast_impls(graph: &Graph) -> TokenStream2 {
+    let mut impls = Vec::new();
+    let mut seen = HashSet::new();
+
+    for source in 0..graph.classes.len() {
+        if !has_virtual_interface(graph, source) {
+            continue;
+        }
+
+        for target in 0..graph.classes.len() {
+            let Some(types) = borrowed_downcast_types(graph, source, target) else {
+                continue;
+            };
+            let key = format!(
+                "{}=>{}",
+                types.source_ty.to_token_stream(),
+                types.target_ty.to_token_stream()
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+
+            impls.push(generate_borrowed_downcast_impl(target, &types));
+        }
+    }
+
+    quote! {
+        #(#impls)*
+    }
+}
+
+struct BorrowedDowncastTypes<'a> {
+    impl_class: &'a ClassDef,
+    source_ty: Type,
+    target_ty: Type,
+}
+
+fn borrowed_downcast_types(
+    graph: &Graph,
+    source: usize,
+    target: usize,
+) -> Option<BorrowedDowncastTypes<'_>> {
+    if graph.mros[target].contains(&source) {
+        return Some(BorrowedDowncastTypes {
+            impl_class: &graph.classes[target],
+            source_ty: ancestor_type(graph, target, source),
+            target_ty: class_type(&graph.classes[target]),
+        });
+    }
+
+    if !graph.classes[source].generics.params.is_empty()
+        || !graph.classes[target].generics.params.is_empty()
+    {
+        return None;
+    }
+
+    let complete = graph
+        .classes
+        .iter()
+        .enumerate()
+        .find(|(complete, class)| {
+            !class.is_abstract
+                && class.generics.params.is_empty()
+                && graph.mros[*complete].contains(&source)
+                && graph.mros[*complete].contains(&target)
+        })
+        .map(|(complete, _)| complete)?;
+
+    Some(BorrowedDowncastTypes {
+        impl_class: &graph.classes[complete],
+        source_ty: ancestor_type(graph, complete, source),
+        target_ty: ancestor_type(graph, complete, target),
+    })
+}
+
+fn generate_borrowed_downcast_impl(
+    target: usize,
+    types: &BorrowedDowncastTypes<'_>,
+) -> TokenStream2 {
+    let (impl_generics, _, where_clause) = types.impl_class.generics.split_for_impl();
+    let source_ty = &types.source_ty;
+    let target_ty = &types.target_ty;
+    let cast_ref = vtable_cast_ref_field_ident();
+    let cast_mut = vtable_cast_mut_field_ident();
+
+    quote! {
+        impl #impl_generics ::oop_mro::OopDowncastRefTarget<#target_ty> for #source_ty #where_clause {
+            fn downcast_ref_target(&self) -> ::core::option::Option<&#target_ty> {
+                let ptr = unsafe {
+                    (self.__oop_vtable.#cast_ref)(self as *const #source_ty, #target)
+                }?;
+                ::core::option::Option::Some(unsafe { &*(ptr as *const #target_ty) })
+            }
+        }
+
+        impl #impl_generics ::oop_mro::OopDowncastMutTarget<#target_ty> for #source_ty #where_clause {
+            fn downcast_mut_target(&mut self) -> ::core::option::Option<&mut #target_ty> {
+                let ptr = unsafe {
+                    (self.__oop_vtable.#cast_mut)(self as *mut #source_ty, #target)
+                }?;
+                ::core::option::Option::Some(unsafe { &mut *(ptr as *mut #target_ty) })
             }
         }
     }
@@ -1954,6 +2238,10 @@ fn generate_vtable_for_class_as(
     let vtable_type = vtable_type_for_actual_class(graph, vtable_index, &actual_vtable_class);
     let vtable_constructor = vtable_ident(&graph.names[vtable_index]);
     let vtable_factory = vtable_factory_ident(graph, class_index, &vtable_slot);
+    let cast_ref_field = vtable_cast_ref_field_ident();
+    let cast_mut_field = vtable_cast_mut_field_ident();
+    let cast_ref_function = vtable_cast_ref_function_ident(graph, class_index, &vtable_slot);
+    let cast_mut_function = vtable_cast_mut_function_ident(graph, class_index, &vtable_slot);
     let entries = interface_methods(graph, vtable_index)
         .into_iter()
         .map(|method| {
@@ -1966,15 +2254,94 @@ fn generate_vtable_for_class_as(
     let functions = interface_methods(graph, vtable_index)
         .into_iter()
         .map(|method| generate_vtable_function(graph, class_index, &vtable_slot, &method));
+    let cast_ref = generate_vtable_cast_function(graph, class_index, &vtable_slot, false);
+    let cast_mut = generate_vtable_cast_function(graph, class_index, &vtable_slot, true);
 
     quote! {
         fn #vtable_factory #impl_generics () -> #vtable_type #where_clause {
             #vtable_constructor {
+                __oop_complete_class_id: #class_index,
+                #cast_ref_field: #cast_ref_function,
+                #cast_mut_field: #cast_mut_function,
                 #(#entries,)*
             }
         }
 
+        #cast_ref
+        #cast_mut
         #(#functions)*
+    }
+}
+
+fn generate_vtable_cast_function(
+    graph: &Graph,
+    class_index: usize,
+    vtable_slot: &VtableSlot,
+    mutable: bool,
+) -> TokenStream2 {
+    let vtable_index = vtable_slot.ancestor;
+    let class = &graph.classes[class_index];
+    let (impl_generics, _, where_clause) = class.generics.split_for_impl();
+    let function = if mutable {
+        vtable_cast_mut_function_ident(graph, class_index, vtable_slot)
+    } else {
+        vtable_cast_ref_function_ident(graph, class_index, vtable_slot)
+    };
+    let receiver_ty = ancestor_type(graph, class_index, vtable_index);
+    let complete = complete_from_receiver_expr(graph, class_index, &vtable_slot.path, mutable);
+    let arms = graph.mros[class_index].iter().copied().map(|target| {
+        let pointer = if target == class_index {
+            if mutable {
+                quote! { complete as *mut _ as *mut () }
+            } else {
+                quote! { complete as *const _ as *const () }
+            }
+        } else {
+            let accessor = if mutable {
+                format_ident!("__oop_as_mut_{}", graph.names[target])
+            } else {
+                format_ident!("__oop_as_{}", graph.names[target])
+            };
+            if mutable {
+                quote! { complete.#accessor() as *mut _ as *mut () }
+            } else {
+                quote! { complete.#accessor() as *const _ as *const () }
+            }
+        };
+
+        quote! {
+            #target => ::core::option::Option::Some(#pointer)
+        }
+    });
+
+    if mutable {
+        quote! {
+            unsafe fn #function #impl_generics (
+                receiver: *mut #receiver_ty,
+                target: usize,
+            ) -> ::core::option::Option<*mut ()> #where_clause {
+                let receiver = unsafe { &mut *receiver };
+                let complete = #complete;
+                match target {
+                    #(#arms,)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        }
+    } else {
+        quote! {
+            unsafe fn #function #impl_generics (
+                receiver: *const #receiver_ty,
+                target: usize,
+            ) -> ::core::option::Option<*const ()> #where_clause {
+                let receiver = unsafe { &*receiver };
+                let complete = #complete;
+                match target {
+                    #(#arms,)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        }
     }
 }
 
@@ -2697,6 +3064,10 @@ fn base_cast_method_ident(name: &str, mutable: bool) -> Ident {
     }
 }
 
+fn private_module_ident(graph: &Graph) -> Ident {
+    format_ident!("__oop_private_{}", graph.names[0])
+}
+
 fn default_base_trait_ident(name: &str) -> Ident {
     format_ident!("__oop_DefaultBase_{}", name)
 }
@@ -2717,6 +3088,26 @@ fn vtable_factory_ident(graph: &Graph, class_index: usize, slot: &VtableSlot) ->
 
 fn vtable_field_ident(method: &Ident) -> Ident {
     format_ident!("__oop_vcall_{}", method)
+}
+
+fn vtable_cast_ref_field_ident() -> Ident {
+    format_ident!("__oop_cast_ref")
+}
+
+fn vtable_cast_mut_field_ident() -> Ident {
+    format_ident!("__oop_cast_mut")
+}
+
+fn vtable_cast_ref_function_ident(graph: &Graph, class_index: usize, slot: &VtableSlot) -> Ident {
+    let class_name = to_snake(&graph.names[class_index]);
+    let slot_name = to_snake(&vtable_slot_name(graph, slot));
+    format_ident!("__oop_cast_ref_{}_as_{}", class_name, slot_name)
+}
+
+fn vtable_cast_mut_function_ident(graph: &Graph, class_index: usize, slot: &VtableSlot) -> Ident {
+    let class_name = to_snake(&graph.names[class_index]);
+    let slot_name = to_snake(&vtable_slot_name(graph, slot));
+    format_ident!("__oop_cast_mut_{}_as_{}", class_name, slot_name)
 }
 
 fn vtable_function_ident(

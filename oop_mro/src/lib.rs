@@ -14,6 +14,51 @@ pub trait OopObject {
     type Class: OopClass;
 }
 
+pub trait OopDowncastRef {
+    fn downcast_ref<Target>(&self) -> Option<&Target>
+    where
+        Self: OopDowncastRefTarget<Target>,
+    {
+        <Self as OopDowncastRefTarget<Target>>::downcast_ref_target(self)
+    }
+}
+
+impl<T: ?Sized> OopDowncastRef for T {}
+
+pub trait OopDowncastRefTarget<Target> {
+    fn downcast_ref_target(&self) -> Option<&Target>;
+}
+
+pub trait OopDowncastMut {
+    fn downcast_mut<Target>(&mut self) -> Option<&mut Target>
+    where
+        Self: OopDowncastMutTarget<Target>,
+    {
+        <Self as OopDowncastMutTarget<Target>>::downcast_mut_target(self)
+    }
+}
+
+impl<T: ?Sized> OopDowncastMut for T {}
+
+pub trait OopDowncastMutTarget<Target> {
+    fn downcast_mut_target(&mut self) -> Option<&mut Target>;
+}
+
+pub trait OopBoxDowncast {
+    fn downcast<Target: ?Sized>(self: Box<Self>) -> Result<Box<Target>, Box<Self>>
+    where
+        Self: OopBoxDowncastTarget<Target>,
+    {
+        <Self as OopBoxDowncastTarget<Target>>::downcast_target(self)
+    }
+}
+
+impl<T: ?Sized> OopBoxDowncast for T {}
+
+pub trait OopBoxDowncastTarget<Target: ?Sized> {
+    fn downcast_target(self: Box<Self>) -> Result<Box<Target>, Box<Self>>;
+}
+
 pub type MethodFn = fn();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +99,9 @@ fn str_eq(left: &str, right: &str) -> bool {
 
 pub mod prelude {
     pub use crate::{
-        oop_class, super_call, MethodEntry, MethodFn, MethodTable, OopClass, OopObject,
+        oop_class, super_call, MethodEntry, MethodFn, MethodTable, OopBoxDowncast,
+        OopBoxDowncastTarget, OopClass, OopDowncastMut, OopDowncastMutTarget, OopDowncastRef,
+        OopDowncastRefTarget, OopObject,
     };
 }
 

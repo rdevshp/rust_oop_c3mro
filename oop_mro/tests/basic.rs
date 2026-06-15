@@ -19,10 +19,19 @@ oop_class! {
         }
     }
 
+    class Mammal: Animal {}
+
     class Dog: Animal, Walker {
         #[override]
         virtual fn speak(&self) -> String {
             format!("woof -> {}", super_call!(Animal::speak, self))
+        }
+    }
+
+    class Kangaroo: Mammal, Walker {
+        #[override]
+        virtual fn speak(&self) -> String {
+            "chuff".into()
         }
     }
 
@@ -331,6 +340,75 @@ fn owned_base_trait_objects_upcast_through_inheritance() {
 }
 
 #[test]
+fn owned_base_trait_objects_downcast_through_inheritance() {
+    let animal: Box<dyn AsAnimal> = Box::new(Kangaroo::default());
+    let mammal = match animal.downcast::<dyn AsMammal>() {
+        Ok(mammal) => mammal,
+        Err(_) => panic!("kangaroo should downcast from Animal to Mammal"),
+    };
+    assert_eq!(mammal.as_mammal().speak(), "chuff");
+
+    let kangaroo = match mammal.downcast::<dyn AsKangaroo>() {
+        Ok(kangaroo) => kangaroo,
+        Err(_) => panic!("kangaroo should downcast from Mammal to Kangaroo"),
+    };
+    assert_eq!(kangaroo.as_kangaroo().walk(), "walking");
+
+    let walker: Box<dyn AsWalker> = Box::new(Kangaroo::default());
+    let kangaroo = match walker.downcast::<dyn AsKangaroo>() {
+        Ok(kangaroo) => kangaroo,
+        Err(_) => panic!("kangaroo should downcast from Walker to Kangaroo"),
+    };
+    assert_eq!(kangaroo.as_kangaroo().speak(), "chuff");
+}
+
+#[test]
+fn failed_owned_downcast_preserves_original_box() {
+    let animal: Box<dyn AsAnimal> = Box::new(Cat::default());
+    let animal = match animal.downcast::<dyn AsDog>() {
+        Ok(_) => panic!("cat should not downcast to Dog"),
+        Err(animal) => animal,
+    };
+
+    assert_eq!(animal.as_animal().speak(), "meow");
+}
+
+#[test]
+fn borrowed_base_references_downcast_through_vtable_metadata() {
+    let kangaroo = Kangaroo::default();
+    let animal = kangaroo.as_animal();
+    let mammal = animal
+        .downcast_ref::<Mammal>()
+        .expect("kangaroo Animal view should downcast to Mammal");
+    let kangaroo_ref = animal
+        .downcast_ref::<Kangaroo>()
+        .expect("kangaroo Animal view should downcast to Kangaroo");
+
+    assert_eq!(mammal.speak(), "chuff");
+    assert_eq!(kangaroo_ref.walk(), "walking");
+
+    let walker = kangaroo.as_walker();
+    let mammal = walker
+        .downcast_ref::<Mammal>()
+        .expect("kangaroo Walker view should cross-cast to Mammal");
+    assert_eq!(mammal.speak(), "chuff");
+
+    let cat = Cat::default();
+    assert!(cat.as_animal().downcast_ref::<Mammal>().is_none());
+}
+
+#[test]
+fn mutable_base_references_downcast_through_vtable_metadata() {
+    let mut counter = LoudCounter::default();
+    let base = counter.as_counter_mut();
+    let loud = base
+        .downcast_mut::<LoudCounter>()
+        .expect("loud counter should downcast from Counter");
+
+    assert_eq!(loud.inc(), 11);
+}
+
+#[test]
 fn exposes_c3_metadata_and_uses_c3_for_forwarding() {
     let object = C::default();
 
@@ -429,12 +507,18 @@ fn supports_generic_classes_and_base_views() {
     let leaf = GenericLeaf::new("leaf".to_string());
     let slots: Vec<Box<dyn AsGenericSlot<String>>> =
         vec![Box::new(GenericLeaf::new("boxed".to_string()))];
+    let slot: Box<dyn AsGenericSlot<String>> = Box::new(GenericLeaf::new("downcast".to_string()));
+    let leaf_box = match slot.downcast::<dyn AsGenericLeaf<String>>() {
+        Ok(leaf) => leaf,
+        Err(_) => panic!("generic slot should downcast to GenericLeaf"),
+    };
 
     assert_eq!(leaf.get(), "leaf");
     assert_eq!(leaf.as_generic_slot().get(), "leaf");
     assert_eq!(leaf.as_generic_slot().passthrough(42usize), 42);
     assert_eq!(leaf.as_generic_slot().cloned("clone".to_string()), "clone");
     assert_eq!(slots[0].as_generic_slot().get(), "boxed");
+    assert_eq!(leaf_box.as_generic_leaf().get(), "downcast");
 }
 
 #[test]
