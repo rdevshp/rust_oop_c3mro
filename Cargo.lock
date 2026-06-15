@@ -51,19 +51,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oop_mro_examples"
+version = "0.1.0"
+dependencies = [
+ "oop_mro",
+]
+
+[[package]]
 name = "oop_mro_macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "oop_mro_playground"
-version = "0.1.0"
-dependencies = [
- "oop_mro",
 ]
 
 [[package]]
