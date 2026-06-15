@@ -1,4 +1,7 @@
 use oop_mro::prelude::*;
+use std::future::Future;
+use std::sync::Arc;
+use std::task::{Context, Poll, Wake, Waker};
 
 oop_class! {
     class Animal {
@@ -162,6 +165,63 @@ oop_class! {
             29
         }
     }
+
+    class AsyncRoot {
+        label: String,
+
+        async fn direct_score(&self, label: &str) -> usize {
+            label.len() + 1
+        }
+
+        async fn direct_label(&self) -> &str {
+            &self.label
+        }
+
+        virtual async fn score(&self, label: &str) -> usize {
+            label.len()
+        }
+
+        virtual async fn label_ref(&self) -> &str {
+            &self.label
+        }
+    }
+
+    class AsyncLeaf: AsyncRoot {
+        #[override]
+        virtual async fn score(&self, label: &str) -> usize {
+            super_call!(AsyncRoot::score, self, label).await + 10
+        }
+    }
+
+    abstract class AsyncAbstract {
+        abstract virtual async fn load(&self) -> usize;
+    }
+
+    class AsyncConcrete: AsyncAbstract {
+        #[override]
+        virtual async fn load(&self) -> usize {
+            33
+        }
+    }
+}
+
+fn block_on<F: Future>(future: F) -> F::Output {
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    let waker = Waker::from(Arc::new(NoopWake));
+    let mut context = Context::from_waker(&waker);
+    let mut future = Box::pin(future);
+
+    loop {
+        match Future::poll(future.as_mut(), &mut context) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    }
 }
 
 #[test]
@@ -292,4 +352,19 @@ fn supports_unsafe_direct_and_virtual_methods() {
         assert_eq!(child.code(), 29);
         assert_eq!(child.as_unsafe_base().code(), 29);
     }
+}
+
+#[test]
+fn supports_async_direct_and_virtual_methods() {
+    let leaf = AsyncLeaf::default();
+    let concrete = AsyncConcrete::default();
+    let roots: Vec<&AsyncRoot> = vec![leaf.as_async_root()];
+
+    assert_eq!(block_on(leaf.score("abc")), 13);
+    assert_eq!(block_on(leaf.as_async_root().score("abcd")), 14);
+    assert_eq!(block_on(leaf.as_async_root().direct_score("xy")), 3);
+    assert_eq!(block_on(leaf.as_async_root().direct_label()), "");
+    assert_eq!(block_on(leaf.as_async_root().label_ref()), "");
+    assert_eq!(block_on(roots[0].score("hello")), 15);
+    assert_eq!(block_on(concrete.as_async_abstract().load()), 33);
 }

@@ -1,0 +1,5 @@
+error: method `fetch` does not satisfy the virtual signature declared in `Service`
+  --> tests/trybuild/fail_async_virtual_mismatch.rs:12:20
+   |
+12 |         virtual fn fetch(&self) -> usize {
+   |                    ^^^^^

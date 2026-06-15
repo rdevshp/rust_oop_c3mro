@@ -7,7 +7,8 @@ use syn::punctuated::Punctuated;
 use syn::visit_mut::{self, VisitMut};
 use syn::{
     braced, bracketed, parenthesized, parse_macro_input, parse_quote, Attribute, Block, Error,
-    Expr, ExprMacro, FnArg, Ident, Pat, Receiver, ReturnType, Signature, Token, Type, Visibility,
+    Expr, ExprMacro, FnArg, Ident, Lifetime, Pat, Receiver, ReturnType, Signature, Token, Type,
+    TypeReference, Visibility,
 };
 
 mod c3;
@@ -711,12 +712,6 @@ fn analyze_method(owner: usize, method: &MethodDef) -> Result<MethodInfo, Vec<Er
             "const methods are not supported",
         ));
     }
-    if sig.asyncness.is_some() {
-        errors.push(Error::new_spanned(
-            sig.asyncness,
-            "async methods are not supported",
-        ));
-    }
     if sig.abi.is_some() {
         errors.push(Error::new_spanned(
             &sig.abi,
@@ -798,8 +793,13 @@ fn analyze_method(owner: usize, method: &MethodDef) -> Result<MethodInfo, Vec<Er
     } else {
         "safe"
     };
+    let asyncness = if sig.asyncness.is_some() {
+        "async"
+    } else {
+        "sync"
+    };
     let signature_key = format!(
-        "{unsafety}|{receiver:?}|{}|{output}",
+        "{asyncness}|{unsafety}|{receiver:?}|{}|{output}",
         arg_type_keys.join(",")
     );
     let signature_display = sig.to_token_stream().to_string();
@@ -1368,16 +1368,36 @@ fn generate_vtable_struct(graph: &Graph, index: usize, class: &ClassDef) -> Toke
     let class_name = &class.name;
     let fields = interface_methods(graph, index).into_iter().map(|method| {
         let field = vtable_field_ident(&method.name);
-        let receiver = match method.receiver {
-            ReceiverKind::Shared => quote! { &#class_name },
-            ReceiverKind::Mutable => quote! { &mut #class_name },
-        };
-        let arg_types = &method.arg_types;
-        let output = &method.sig.output;
         let unsafety = &method.sig.unsafety;
 
-        quote! {
-            #field: #unsafety fn(#receiver #(, #arg_types)*) #output
+        if method.sig.asyncness.is_some() {
+            let lifetime = async_dispatch_lifetime();
+            let receiver = match method.receiver {
+                ReceiverKind::Shared => quote! { &#lifetime #class_name },
+                ReceiverKind::Mutable => quote! { &#lifetime mut #class_name },
+            };
+            let arg_types = method
+                .arg_types
+                .iter()
+                .map(|ty| type_with_elided_refs_lifetime(ty, &lifetime))
+                .collect::<Vec<_>>();
+            let output = async_output_type(&method.sig, &lifetime);
+            let future = boxed_future_type(output, &lifetime);
+
+            quote! {
+                #field: for<#lifetime> #unsafety fn(#receiver #(, #arg_types)*) -> #future
+            }
+        } else {
+            let receiver = match method.receiver {
+                ReceiverKind::Shared => quote! { &#class_name },
+                ReceiverKind::Mutable => quote! { &mut #class_name },
+            };
+            let arg_types = &method.arg_types;
+            let output = &method.sig.output;
+
+            quote! {
+                #field: #unsafety fn(#receiver #(, #arg_types)*) #output
+            }
         }
     });
 
@@ -1385,6 +1405,48 @@ fn generate_vtable_struct(graph: &Graph, index: usize, class: &ClassDef) -> Toke
         struct #vtable_name {
             #(#fields,)*
         }
+    }
+}
+
+fn async_dispatch_lifetime() -> Lifetime {
+    parse_quote!('__oop_async)
+}
+
+fn async_output_type(sig: &Signature, lifetime: &Lifetime) -> TokenStream2 {
+    match &sig.output {
+        ReturnType::Default => quote! { () },
+        ReturnType::Type(_, ty) => type_with_elided_refs_lifetime(ty, lifetime).to_token_stream(),
+    }
+}
+
+fn boxed_future_type(output: TokenStream2, lifetime: &Lifetime) -> TokenStream2 {
+    quote! {
+        ::core::pin::Pin<
+            ::std::boxed::Box<
+                dyn ::core::future::Future<Output = #output> + #lifetime
+            >
+        >
+    }
+}
+
+fn type_with_elided_refs_lifetime(ty: &Type, lifetime: &Lifetime) -> Type {
+    let mut ty = ty.clone();
+    let mut binder = ElidedReferenceLifetimeBinder { lifetime };
+    binder.visit_type_mut(&mut ty);
+    ty
+}
+
+struct ElidedReferenceLifetimeBinder<'a> {
+    lifetime: &'a Lifetime,
+}
+
+impl VisitMut for ElidedReferenceLifetimeBinder<'_> {
+    fn visit_type_reference_mut(&mut self, node: &mut TypeReference) {
+        if node.lifetime.is_none() {
+            node.lifetime = Some(self.lifetime.clone());
+        }
+
+        visit_mut::visit_type_reference_mut(self, node);
     }
 }
 
@@ -1566,6 +1628,10 @@ fn generate_vtable_function(
     vtable_slot: &VtableSlot,
     method: &MethodInfo,
 ) -> TokenStream2 {
+    if method.sig.asyncness.is_some() {
+        return generate_async_vtable_function(graph, class_index, vtable_slot, method);
+    }
+
     let vtable_index = vtable_slot.ancestor;
     let function = vtable_function_ident(graph, class_index, vtable_slot, &method.name);
     let receiver_ty = &graph.classes[vtable_index].name;
@@ -1633,6 +1699,109 @@ fn generate_vtable_function(
 
             quote! {
                 #unsafety fn #function(receiver: &mut #receiver_ty #(, #arg_idents: #arg_types)*) #output {
+                    #body
+                }
+            }
+        }
+    }
+}
+
+fn generate_async_vtable_function(
+    graph: &Graph,
+    class_index: usize,
+    vtable_slot: &VtableSlot,
+    method: &MethodInfo,
+) -> TokenStream2 {
+    let vtable_index = vtable_slot.ancestor;
+    let function = vtable_function_ident(graph, class_index, vtable_slot, &method.name);
+    let receiver_ty = &graph.classes[vtable_index].name;
+    let arg_idents = &method.arg_idents;
+    let arg_types = method
+        .arg_types
+        .iter()
+        .map(|ty| {
+            let lifetime = async_dispatch_lifetime();
+            type_with_elided_refs_lifetime(ty, &lifetime)
+        })
+        .collect::<Vec<_>>();
+    let unsafety = &method.sig.unsafety;
+    let method_name = method.name.to_string();
+    let vtable_class_name = &graph.names[vtable_index];
+    let lifetime = async_dispatch_lifetime();
+    let output = async_output_type(&method.sig, &lifetime);
+    let future = boxed_future_type(output, &lifetime);
+
+    let selected = graph.selected_methods[class_index]
+        .get(&method.name.to_string())
+        .filter(|selected| selected.signature_key == method.signature_key);
+
+    match method.receiver {
+        ReceiverKind::Shared => {
+            let body = if let Some(selected) = selected {
+                let complete =
+                    complete_from_receiver_expr(graph, class_index, &vtable_slot.path, false);
+                let call = selected_virtual_impl_call(
+                    graph,
+                    class_index,
+                    selected,
+                    false,
+                    arg_idents,
+                    selected.sig.unsafety.is_some(),
+                );
+                quote! {
+                    ::std::boxed::Box::pin(async move {
+                        let complete = #complete;
+                        #call.await
+                    })
+                }
+            } else {
+                quote! {
+                    ::std::boxed::Box::pin(async move {
+                        panic!("abstract virtual method `{}::{}` was called", #vtable_class_name, #method_name)
+                    })
+                }
+            };
+
+            quote! {
+                #unsafety fn #function<#lifetime>(
+                    receiver: &#lifetime #receiver_ty
+                    #(, #arg_idents: #arg_types)*
+                ) -> #future {
+                    #body
+                }
+            }
+        }
+        ReceiverKind::Mutable => {
+            let body = if let Some(selected) = selected {
+                let complete =
+                    complete_from_receiver_expr(graph, class_index, &vtable_slot.path, true);
+                let call = selected_virtual_impl_call(
+                    graph,
+                    class_index,
+                    selected,
+                    true,
+                    arg_idents,
+                    selected.sig.unsafety.is_some(),
+                );
+                quote! {
+                    ::std::boxed::Box::pin(async move {
+                        let complete = #complete;
+                        #call.await
+                    })
+                }
+            } else {
+                quote! {
+                    ::std::boxed::Box::pin(async move {
+                        panic!("abstract virtual method `{}::{}` was called", #vtable_class_name, #method_name)
+                    })
+                }
+            };
+
+            quote! {
+                #unsafety fn #function<#lifetime>(
+                    receiver: &#lifetime mut #receiver_ty
+                    #(, #arg_idents: #arg_types)*
+                ) -> #future {
                     #body
                 }
             }
@@ -1937,8 +2106,18 @@ fn generate_virtual_wrapper(method: &MethodInfo) -> TokenStream2 {
         (self.__oop_vtable.#field)(self, #(#args),*)
     };
     let body = if method.sig.unsafety.is_some() {
+        if method.sig.asyncness.is_some() {
+            quote! {
+                unsafe { #call }.await
+            }
+        } else {
+            quote! {
+                unsafe { #call }
+            }
+        }
+    } else if method.sig.asyncness.is_some() {
         quote! {
-            unsafe { #call }
+            #call.await
         }
     } else {
         call

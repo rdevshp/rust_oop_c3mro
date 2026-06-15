@@ -2,7 +2,7 @@ use oop_mro::prelude::*;
 
 oop_class! {
     class Animal {
-        async fn speak(&self) -> String {
+        const fn speak(&self) -> String {
             "generic".into()
         }
     }
