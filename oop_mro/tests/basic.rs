@@ -1,7 +1,6 @@
 use oop_mro::prelude::*;
 use std::future::Future;
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 oop_class! {
     class Animal {
@@ -206,14 +205,8 @@ oop_class! {
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {
-    struct NoopWake;
-
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut context = Context::from_waker(&waker);
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
     let mut future = Box::pin(future);
 
     loop {
