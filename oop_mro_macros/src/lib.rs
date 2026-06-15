@@ -345,6 +345,8 @@ struct MethodInfo {
     signature_display: String,
 }
 
+type MethodMap = BTreeMap<String, MethodInfo>;
+
 #[derive(Debug)]
 struct Graph {
     classes: Vec<ClassDef>,
@@ -352,8 +354,8 @@ struct Graph {
     name_to_index: HashMap<String, usize>,
     bases: Vec<Vec<usize>>,
     mros: Vec<Vec<usize>>,
-    selected_methods: Vec<BTreeMap<String, MethodInfo>>,
-    abstract_methods: Vec<BTreeMap<String, MethodInfo>>,
+    selected_methods: Vec<MethodMap>,
+    abstract_methods: Vec<MethodMap>,
 }
 
 #[derive(Debug, Clone)]
@@ -485,10 +487,7 @@ fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Graph {
     }
 }
 
-fn collect_direct_methods(
-    classes: &[ClassDef],
-    errors: &mut Vec<Error>,
-) -> Vec<BTreeMap<String, MethodInfo>> {
+fn collect_direct_methods(classes: &[ClassDef], errors: &mut Vec<Error>) -> Vec<MethodMap> {
     let mut result = Vec::with_capacity(classes.len());
 
     for (class_index, class) in classes.iter().enumerate() {
@@ -679,7 +678,7 @@ fn constructor_keyword_span(constructor: &ConstructorDef) -> Span {
 
 fn validate_concrete_classes(
     classes: &[ClassDef],
-    abstract_methods: &[BTreeMap<String, MethodInfo>],
+    abstract_methods: &[MethodMap],
     errors: &mut Vec<Error>,
 ) {
     for (class_index, class) in classes.iter().enumerate() {
@@ -854,12 +853,9 @@ fn public_if_inherited(vis: &Visibility) -> Visibility {
 fn resolve_methods(
     classes: &[ClassDef],
     mros: &[Vec<usize>],
-    direct_methods: &[BTreeMap<String, MethodInfo>],
+    direct_methods: &[MethodMap],
     errors: &mut Vec<Error>,
-) -> (
-    Vec<BTreeMap<String, MethodInfo>>,
-    Vec<BTreeMap<String, MethodInfo>>,
-) {
+) -> (Vec<MethodMap>, Vec<MethodMap>) {
     let mut selected_by_class = Vec::with_capacity(classes.len());
     let mut abstract_by_class = Vec::with_capacity(classes.len());
 
@@ -1067,7 +1063,7 @@ struct SuperCallRewriter<'a> {
     names: &'a [String],
     name_to_index: &'a HashMap<String, usize>,
     mros: &'a [Vec<usize>],
-    selected_methods: &'a [BTreeMap<String, MethodInfo>],
+    selected_methods: &'a [MethodMap],
     errors: Vec<Error>,
 }
 
@@ -2214,11 +2210,7 @@ fn generate_accessors(graph: &Graph, index: usize, _class: &ClassDef) -> TokenSt
 
 fn accessor_body(graph: &Graph, start: usize, target: usize, mutable: bool) -> TokenStream2 {
     let path = find_base_path(graph, start, target).expect("ancestor path must exist");
-    let mut tokens = if mutable {
-        quote! { self }
-    } else {
-        quote! { self }
-    };
+    let mut tokens = quote! { self };
 
     for base in path {
         let field = base_field_ident(&graph.names[base]);

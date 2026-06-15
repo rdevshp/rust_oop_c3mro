@@ -305,6 +305,7 @@ fn supports_mutable_super_calls() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn supports_abstract_superclass_methods_with_concrete_overrides() {
     let square = Square::default();
     let shapes: Vec<&Shape> = vec![square.as_shape()];
@@ -319,6 +320,7 @@ fn supports_abstract_superclass_methods_with_concrete_overrides() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn inherited_concrete_methods_can_satisfy_abstract_requirements() {
     let icon = Icon::default();
     let drawables: Vec<&AbstractDrawable> = vec![icon.as_abstract_drawable()];

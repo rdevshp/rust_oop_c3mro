@@ -22,7 +22,7 @@ oop_class! {
         }
         #[override]
         virtual fn speak(&self) {
-            println!("{}", format!("{} speaking", self.identity()));
+            println!("{} speaking", self.identity());
         }
     }
     class Kangaroo: Mammal {
@@ -93,14 +93,9 @@ oop_class! {
     }
 }
 
-
 oop_class! {
     class Test {
-        virtual async unsafe fn f(&self) {
-            unsafe {
-                let a = 1;
-            }
-        }
+        virtual async unsafe fn f(&self) {}
     }
 }
 
@@ -119,20 +114,22 @@ fn main() {
         */
     }
 
-    let animals: Vec<Box<dyn AsAnimal>> = vec![
-        Box::new(Dog::default()),
-        Box::new(Kangaroo::default()),
-    ];
+    let animals: Vec<Box<dyn AsAnimal>> =
+        vec![Box::new(Dog::default()), Box::new(Kangaroo::default())];
 
     for object in &animals {
         let animal: &Animal = object.as_animal();
         println!("{}", animal.name());
     }
 
-
-    assert_eq!(<Document as OopClass>::MRO, &["Document", "Named", "Tagged", "Entity"]);
+    assert_eq!(
+        <Document as OopClass>::MRO,
+        &["Document", "Named", "Tagged", "Entity"]
+    );
     println!("{}", Document::default().describe()); // Named -> Entity
-    assert_eq!(<Document2 as OopClass>::MRO, &["Document2", "Tagged", "Named", "Entity"]);
+    assert_eq!(
+        <Document2 as OopClass>::MRO,
+        &["Document2", "Tagged", "Named", "Entity"]
+    );
     println!("{}", Document2::default().describe()); // Tagged -> Entity
-
 }
