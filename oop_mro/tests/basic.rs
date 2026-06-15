@@ -230,7 +230,28 @@ oop_class! {
             &self.value
         }
     }
+
+    class ConstValue<T: Default> {
+        value: T,
+
+        const fn get(&self) -> &T {
+            &self.value
+        }
+
+        const fn passthrough<U>(&self, value: U) -> U {
+            value
+        }
+
+        const unsafe fn unchecked(&self) -> &T {
+            &self.value
+        }
+    }
 }
+
+const CONST_VALUE: ConstValue<usize> = ConstValue { value: 17 };
+const CONST_GET: &usize = CONST_VALUE.get();
+const CONST_PASSTHROUGH: usize = CONST_VALUE.passthrough(23);
+const CONST_UNCHECKED: &usize = unsafe { CONST_VALUE.unchecked() };
 
 fn block_on<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
@@ -403,4 +424,11 @@ fn supports_generic_classes_and_base_views() {
     assert_eq!(leaf.as_generic_slot().passthrough(42usize), 42);
     assert_eq!(leaf.as_generic_slot().cloned("clone".to_string()), "clone");
     assert_eq!(slots[0].as_generic_slot().get(), "boxed");
+}
+
+#[test]
+fn supports_const_direct_methods() {
+    assert_eq!(*CONST_GET, 17);
+    assert_eq!(CONST_PASSTHROUGH, 23);
+    assert_eq!(*CONST_UNCHECKED, 17);
 }

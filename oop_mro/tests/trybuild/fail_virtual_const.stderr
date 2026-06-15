@@ -1,0 +1,5 @@
+error: virtual const methods are not supported
+ --> tests/trybuild/fail_virtual_const.rs:5:17
+  |
+5 |         virtual const fn speak(&self) -> usize {
+  |                 ^^^^^

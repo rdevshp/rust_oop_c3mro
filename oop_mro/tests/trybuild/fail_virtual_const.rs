@@ -2,8 +2,8 @@ use oop_mro::prelude::*;
 
 oop_class! {
     class Animal {
-        extern "C" fn speak(&self) -> String {
-            "generic".into()
+        virtual const fn speak(&self) -> usize {
+            1
         }
     }
 }

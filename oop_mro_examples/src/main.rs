@@ -101,7 +101,7 @@ oop_class! {
 #[derive(Debug)]
 #[allow(dead_code)]
 struct Job {
-    id: u32
+    id: u32,
 }
 oop_class! {
     abstract class Factory<T> {
@@ -158,5 +158,4 @@ fn main() {
     let mut job_factory = JobFactory::new();
     println!("job id: {:?} ", job_factory.create());
     println!("job id: {:?} ", job_factory.create());
-
 }

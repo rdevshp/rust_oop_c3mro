@@ -1,0 +1,5 @@
+error: const async methods are not supported
+ --> tests/trybuild/fail_const_async.rs:5:9
+  |
+5 |         const async fn load(&self) -> usize {
+  |         ^^^^^

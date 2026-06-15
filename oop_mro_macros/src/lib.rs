@@ -736,10 +736,16 @@ fn analyze_method(owner: usize, method: &MethodDef) -> Result<MethodInfo, Vec<Er
     let mut errors = Vec::new();
     let sig = &method.sig;
 
-    if sig.constness.is_some() {
+    if sig.constness.is_some() && sig.asyncness.is_some() {
         errors.push(Error::new_spanned(
             sig.constness,
-            "const methods are not supported",
+            "const async methods are not supported",
+        ));
+    }
+    if method.is_virtual && sig.constness.is_some() {
+        errors.push(Error::new_spanned(
+            sig.constness,
+            "virtual const methods are not supported",
         ));
     }
     if sig.abi.is_some() {

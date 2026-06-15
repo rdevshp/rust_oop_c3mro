@@ -1,0 +1,5 @@
+error: virtual const methods are not supported
+ --> tests/trybuild/fail_abstract_virtual_const.rs:5:26
+  |
+5 |         abstract virtual const fn speak(&self) -> usize;
+  |                          ^^^^^
