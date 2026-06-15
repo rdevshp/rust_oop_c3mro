@@ -113,8 +113,13 @@ pub(super) fn generate_default_base_impl(
     let field_initializers = class.items.iter().filter_map(|item| match item {
         ClassItem::Field(field) => {
             let ident = &field.ident;
+            let value = field
+                .initializer
+                .as_ref()
+                .map(ToTokens::to_token_stream)
+                .unwrap_or_else(|| quote! { ::core::default::Default::default() });
             Some(quote! {
-                #ident: ::core::default::Default::default()
+                #ident: #value
             })
         }
         ClassItem::Method(_) => None,

@@ -347,6 +347,7 @@ pub(crate) struct FieldDef {
     pub(crate) ident: Ident,
     pub(crate) colon_token: Token![:],
     pub(crate) ty: Type,
+    pub(crate) initializer: Option<Expr>,
 }
 
 impl Parse for FieldDef {
@@ -356,6 +357,12 @@ impl Parse for FieldDef {
         let ident: Ident = input.parse()?;
         let colon_token: Token![:] = input.parse()?;
         let ty: Type = input.parse()?;
+        let initializer = if input.peek(Token![=]) {
+            let _: Token![=] = input.parse()?;
+            Some(input.parse()?)
+        } else {
+            None
+        };
 
         if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
@@ -370,6 +377,7 @@ impl Parse for FieldDef {
             ident,
             colon_token,
             ty,
+            initializer,
         })
     }
 }

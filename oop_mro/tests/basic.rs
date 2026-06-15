@@ -3,6 +3,9 @@ use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
+#[derive(Debug, PartialEq, Eq)]
+struct NoDefault(usize);
+
 oop_class! {
     class Animal {
         virtual fn speak(&self) -> String {
@@ -276,6 +279,28 @@ oop_class! {
 
         fn allocate_id() -> usize {
             Self::NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        }
+    }
+
+    class InitializedFields {
+        id: NoDefault = NoDefault(7),
+        label: String = String::from("ready"),
+        numbers: Vec<usize> = vec![1, 2, 3],
+
+        constructor() {
+            self.numbers.push(4);
+        }
+
+        fn id(&self) -> usize {
+            self.id.0
+        }
+
+        fn label(&self) -> &str {
+            &self.label
+        }
+
+        fn numbers(&self) -> &[usize] {
+            &self.numbers
         }
     }
 }
@@ -562,4 +587,18 @@ fn supports_static_methods_and_associated_constants() {
     assert_eq!(StaticUtility::allocate_id(), 1);
     assert_eq!(StaticUtility::allocate_id(), 2);
     assert_eq!(StaticUtility::NEXT_ID.load(Ordering::Relaxed), 3);
+}
+
+#[test]
+fn supports_field_initializers() {
+    let default_value = InitializedFields::default();
+    let constructed = InitializedFields::new();
+
+    assert_eq!(default_value.id(), 7);
+    assert_eq!(default_value.label(), "ready");
+    assert_eq!(default_value.numbers(), &[1, 2, 3]);
+
+    assert_eq!(constructed.id(), 7);
+    assert_eq!(constructed.label(), "ready");
+    assert_eq!(constructed.numbers(), &[1, 2, 3, 4]);
 }
