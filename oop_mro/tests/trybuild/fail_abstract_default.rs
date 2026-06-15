@@ -8,6 +8,13 @@ oop_class! {
     abstract class StillAbstract: AbstractShape {}
 }
 
+#[diagnostic::on_unimplemented(message = "abstract classes must not implement Default")]
+trait MustBeDefault {}
+
+impl<T: Default> MustBeDefault for T {}
+
+fn require_default<T: MustBeDefault>() {}
+
 fn main() {
-    let _ = StillAbstract::default();
+    require_default::<StillAbstract>();
 }
