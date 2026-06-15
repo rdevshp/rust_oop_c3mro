@@ -49,6 +49,9 @@ fn main() {
     let base: &Repository<String> = repository.as_repository();
     let owned: Vec<Box<dyn AsRepository<String>>> =
         vec![Box::new(MemoryRepository::new(String::from("boxed")))];
+    let memory: Box<dyn AsMemoryRepository<String>> =
+        Box::new(MemoryRepository::new(String::from("upcast")));
+    let upcast: Box<dyn AsRepository<String>> = memory;
     let array = ArrayHolder::<u8, 4>::default();
     let const_leaf = ConstLeaf::<4>::default();
 
@@ -56,6 +59,7 @@ fn main() {
     assert_eq!(base.current(), "stored");
     assert_eq!(base.map(7), Some(7));
     assert_eq!(owned[0].as_repository().current(), "boxed");
+    assert_eq!(upcast.as_repository().current(), "upcast");
     assert_eq!(array.len(), 4);
     assert_eq!(const_leaf.as_const_base().len(), 5);
 }

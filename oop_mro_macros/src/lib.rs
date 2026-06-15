@@ -1701,13 +1701,26 @@ impl VisitMut for ElidedReferenceLifetimeBinder<'_> {
 fn generate_base_cast_trait(graph: &Graph, index: usize, class: &ClassDef) -> TokenStream2 {
     let vis = public_if_inherited(&class.vis);
     let trait_name = base_cast_trait_ident(&graph.names[index]);
-    let generics = &class.generics;
+    let (trait_generics, _, where_clause) = class.generics.split_for_impl();
     let class_ty = class_type_tokens(class);
     let shared_name = base_cast_method_ident(&graph.names[index], false);
     let mutable_name = base_cast_method_ident(&graph.names[index], true);
+    let supertraits = class
+        .bases
+        .iter()
+        .map(|base| {
+            let base_index = graph.name_to_index[&base.name.to_string()];
+            base_cast_trait_for_actual_class(graph, base_index, &base.ty)
+        })
+        .collect::<Vec<_>>();
+    let supertrait_bound = (!supertraits.is_empty()).then(|| {
+        quote! {
+            : #(#supertraits)+*
+        }
+    });
 
     quote! {
-        #vis trait #trait_name #generics {
+        #vis trait #trait_name #trait_generics #supertrait_bound #where_clause {
             fn #shared_name(&self) -> &#class_ty;
             fn #mutable_name(&mut self) -> &mut #class_ty;
         }

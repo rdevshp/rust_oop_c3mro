@@ -320,6 +320,17 @@ fn base_references_dispatch_inherited_and_mutable_virtual_methods() {
 }
 
 #[test]
+fn owned_base_trait_objects_upcast_through_inheritance() {
+    let dog: Box<dyn AsDog> = Box::new(Dog::default());
+    let animal: Box<dyn AsAnimal> = dog;
+    assert_eq!(animal.as_animal().speak(), "woof -> generic");
+
+    let dog: Box<dyn AsDog> = Box::new(Dog::default());
+    let walker: Box<dyn AsWalker> = dog;
+    assert_eq!(walker.as_walker().walk(), "walking");
+}
+
+#[test]
 fn exposes_c3_metadata_and_uses_c3_for_forwarding() {
     let object = C::default();
 
