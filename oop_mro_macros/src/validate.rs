@@ -479,6 +479,7 @@ fn validate_constructors(
             validate_constructor_inputs(constructor, errors);
 
             let mut seen_bases = HashSet::new();
+            let mut initialized_direct_bases = HashSet::new();
             for base_call in &constructor.base_calls {
                 let base_name = base_call.base.to_string();
                 if !seen_bases.insert(base_name.clone()) {
@@ -503,6 +504,20 @@ fn validate_constructors(
                         format!(
                             "constructor initializer `{base_name}` must name a direct base class of `{}`",
                             class.name
+                        ),
+                    ));
+                } else {
+                    initialized_direct_bases.insert(base_index);
+                }
+            }
+
+            for &base_index in &bases[class_index] {
+                if !initialized_direct_bases.contains(&base_index) {
+                    errors.push(Error::new(
+                        constructor_keyword_span(constructor),
+                        format!(
+                            "constructor for class `{}` must explicitly initialize direct base `{}`",
+                            class.name, classes[base_index].name
                         ),
                     ));
                 }

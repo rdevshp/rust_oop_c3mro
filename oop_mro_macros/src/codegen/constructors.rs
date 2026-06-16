@@ -54,26 +54,21 @@ fn generate_constructor_base_calls(
     index: usize,
     constructor: Option<&ConstructorDef>,
 ) -> TokenStream2 {
-    let calls = graph.bases[index].iter().map(|&base| {
+    let calls = graph.bases[index].iter().filter_map(|&base| {
         let base_name = &graph.names[base];
         let accessor = format_ident!("__oop_as_mut_{}", base_name);
-        let explicit_call = constructor.and_then(|constructor| {
+        constructor.and_then(|constructor| {
             constructor
                 .base_calls
                 .iter()
                 .find(|base_call| base_call.base == base_name.as_str())
-        });
-
-        if let Some(base_call) = explicit_call {
-            let args = &base_call.args;
-            quote! {
-                self.#accessor().__oop_ctor(#(#args),*);
-            }
-        } else {
-            quote! {
-                self.#accessor().__oop_ctor();
-            }
-        }
+                .map(|base_call| {
+                    let args = &base_call.args;
+                    quote! {
+                        self.#accessor().__oop_ctor(#(#args),*);
+                    }
+                })
+        })
     });
 
     quote! {

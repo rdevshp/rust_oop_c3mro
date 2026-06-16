@@ -3,3 +3,9 @@ error: constructor initializer `Object` must name a direct base class of `Dog`
   |
 8 |         constructor(): Object() {}
   |                        ^^^^^^
+
+error: constructor for class `Dog` must explicitly initialize direct base `Animal`
+ --> tests/trybuild/fail_constructor_indirect_base.rs:8:9
+  |
+8 |         constructor(): Object() {}
+  |         ^^^^^^^^^^^

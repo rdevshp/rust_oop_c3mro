@@ -1,0 +1,5 @@
+error: constructor for class `Dog` must explicitly initialize direct base `Animal`
+ --> tests/trybuild/fail_constructor_missing_base.rs:7:9
+  |
+7 |         constructor() {}
+  |         ^^^^^^^^^^^

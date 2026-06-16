@@ -14,7 +14,7 @@ oop_class! {
     abstract class Mammal: Animal, Serializable {
         typ: String,
 
-        constructor() {
+        constructor(): Animal(), Serializable() {
             self.typ = String::from("mammal");
         }
         #[override]
@@ -29,7 +29,7 @@ oop_class! {
     class Kangaroo: Mammal {
         name: String,
 
-        constructor(name: String) {
+        constructor(name: String): Mammal() {
             self.name = name;
         }
         #[override]
@@ -48,7 +48,7 @@ oop_class! {
     class Dog: Mammal {
         name: String,
 
-        constructor(name: String) {
+        constructor(name: String): Mammal() {
             self.name = name;
         }
         #[override]
@@ -110,7 +110,7 @@ oop_class! {
     }
     class JobFactory: Factory<Job> {
         id: u32 = 50,
-        constructor() {}
+        constructor(): Factory() {}
         #[override]
         virtual fn create(&mut self) -> Job {
             let r = self.id;
