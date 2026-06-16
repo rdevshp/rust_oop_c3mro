@@ -3,8 +3,18 @@ use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
+static VIRTUAL_OBJECT_DROPS: AtomicUsize = AtomicUsize::new(0);
+
 #[derive(Debug, PartialEq, Eq)]
 struct NoDefault(usize);
+
+struct VirtualDropToken;
+
+impl Drop for VirtualDropToken {
+    fn drop(&mut self) {
+        VIRTUAL_OBJECT_DROPS.fetch_add(1, Ordering::SeqCst);
+    }
+}
 
 oop_class! {
     class Animal {
@@ -302,6 +312,110 @@ oop_class! {
         fn numbers(&self) -> &[usize] {
             &self.numbers
         }
+    }
+
+    class VirtualObject {
+        value: usize,
+        drop_token: VirtualDropToken = VirtualDropToken,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn raw_value(&self) -> usize {
+            self.value
+        }
+
+        fn set_raw_value(&mut self, value: usize) {
+            self.value = value;
+        }
+
+        virtual fn virtual_value(&self) -> usize {
+            self.value
+        }
+    }
+
+    class VirtualLeft: virtual VirtualObject {
+        constructor(): VirtualObject(1) {}
+    }
+
+    class VirtualRight: virtual VirtualObject {
+        constructor(): VirtualObject(2) {}
+    }
+
+    class VirtualDiamond: VirtualLeft, VirtualRight {
+        constructor(): VirtualObject(10), VirtualLeft(), VirtualRight() {}
+
+        #[override]
+        virtual fn virtual_value(&self) -> usize {
+            self.as_virtual_object().raw_value() + 1000
+        }
+    }
+
+    class DirectIndirectVirtualRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn value(&self) -> usize {
+            self.value
+        }
+
+        fn set_value(&mut self, value: usize) {
+            self.value = value;
+        }
+
+        virtual fn dispatched(&self) -> usize {
+            self.value
+        }
+    }
+
+    class IndirectVirtualBranch: virtual DirectIndirectVirtualRoot {
+        constructor(): DirectIndirectVirtualRoot(1) {}
+    }
+
+    class DirectIndirectVirtualDiamond: virtual DirectIndirectVirtualRoot, IndirectVirtualBranch {
+        constructor(): DirectIndirectVirtualRoot(7), IndirectVirtualBranch() {}
+
+        #[override]
+        virtual fn dispatched(&self) -> usize {
+            self.as_direct_indirect_virtual_root().value() + 100
+        }
+    }
+
+    class SpecializedSlot<T> {
+        label: String,
+
+        constructor(label: String) {
+            self.label = label;
+        }
+
+        fn label(&self) -> &str {
+            &self.label
+        }
+
+        virtual fn type_name(&self) -> &'static str {
+            core::any::type_name::<T>()
+        }
+    }
+
+    class SpecializedLeft: virtual SpecializedSlot<i32> {
+        constructor(): SpecializedSlot<i32>("left".into()) {}
+    }
+
+    class SpecializedRight: virtual SpecializedSlot<String> {
+        constructor(): SpecializedSlot<String>("right".into()) {}
+    }
+
+    class SpecializedDiamond: SpecializedLeft, SpecializedRight {
+        constructor():
+            SpecializedSlot<i32>("int".into()),
+            SpecializedSlot<String>("string".into()),
+            SpecializedLeft(),
+            SpecializedRight()
+        {}
     }
 }
 
@@ -601,4 +715,96 @@ fn supports_field_initializers() {
     assert_eq!(constructed.id(), 7);
     assert_eq!(constructed.label(), "ready");
     assert_eq!(constructed.numbers(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn virtual_diamond_shares_base_storage_and_dispatch() {
+    VIRTUAL_OBJECT_DROPS.store(0, Ordering::SeqCst);
+
+    {
+        let mut diamond = VirtualDiamond::new();
+
+        assert!(core::ptr::eq(
+            diamond.as_virtual_left().as_virtual_object(),
+            diamond.as_virtual_right().as_virtual_object(),
+        ));
+        assert_eq!(diamond.as_virtual_object().raw_value(), 10);
+        assert_eq!(
+            diamond
+                .as_virtual_left()
+                .as_virtual_object()
+                .virtual_value(),
+            1010
+        );
+        assert!(diamond
+            .as_virtual_object()
+            .downcast_ref::<VirtualLeft>()
+            .is_some());
+        assert!(diamond
+            .as_virtual_object()
+            .downcast_ref::<VirtualRight>()
+            .is_some());
+        assert!(diamond
+            .as_virtual_object()
+            .downcast_ref::<VirtualDiamond>()
+            .is_some());
+
+        diamond
+            .as_virtual_right_mut()
+            .as_virtual_object_mut()
+            .set_raw_value(33);
+        assert_eq!(
+            diamond.as_virtual_left().as_virtual_object().raw_value(),
+            33
+        );
+        assert_eq!(diamond.as_virtual_object().virtual_value(), 1033);
+    }
+
+    assert_eq!(VIRTUAL_OBJECT_DROPS.load(Ordering::SeqCst), 1);
+
+    let boxed: Box<dyn AsVirtualObject> = Box::new(VirtualDiamond::new());
+    let boxed = match boxed.downcast::<dyn AsVirtualDiamond>() {
+        Ok(boxed) => boxed,
+        Err(_) => panic!("virtual object box should downcast to complete diamond"),
+    };
+    assert_eq!(boxed.as_virtual_diamond().virtual_value(), 1010);
+}
+
+#[test]
+fn virtual_base_can_be_reached_by_direct_and_indirect_edges() {
+    let mut diamond = DirectIndirectVirtualDiamond::new();
+
+    assert!(core::ptr::eq(
+        diamond.as_direct_indirect_virtual_root(),
+        diamond
+            .as_indirect_virtual_branch()
+            .as_direct_indirect_virtual_root(),
+    ));
+    assert_eq!(diamond.as_direct_indirect_virtual_root().value(), 7);
+    assert_eq!(diamond.as_direct_indirect_virtual_root().dispatched(), 107);
+
+    diamond
+        .as_indirect_virtual_branch_mut()
+        .as_direct_indirect_virtual_root_mut()
+        .set_value(19);
+    assert_eq!(diamond.as_direct_indirect_virtual_root().value(), 19);
+    assert_eq!(diamond.as_direct_indirect_virtual_root().dispatched(), 119);
+}
+
+#[test]
+fn virtual_generic_specializations_are_distinct_bases() {
+    let diamond = SpecializedDiamond::new();
+    let left_slot: &SpecializedSlot<i32> =
+        <SpecializedDiamond as AsSpecializedSlot<i32>>::as_specialized_slot(&diamond);
+    let right_slot: &SpecializedSlot<String> =
+        <SpecializedDiamond as AsSpecializedSlot<String>>::as_specialized_slot(&diamond);
+
+    assert_ne!(
+        left_slot as *const SpecializedSlot<i32> as *const (),
+        right_slot as *const SpecializedSlot<String> as *const (),
+    );
+    assert_eq!(left_slot.label(), "int");
+    assert_eq!(right_slot.label(), "string");
+    assert_eq!(left_slot.type_name(), "i32");
+    assert_eq!(right_slot.type_name(), "alloc::string::String");
 }

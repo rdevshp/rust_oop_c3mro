@@ -7,6 +7,10 @@ pub(crate) fn base_field_ident(name: &str) -> Ident {
     format_ident!("__oop_base_{}", to_snake(name))
 }
 
+pub(crate) fn virtual_base_field_ident(name: &str) -> Ident {
+    format_ident!("__oop_vbase_{}", to_snake(name))
+}
+
 pub(crate) fn base_cast_trait_ident(name: &str) -> Ident {
     format_ident!("As{}", name)
 }

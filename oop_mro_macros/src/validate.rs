@@ -14,8 +14,10 @@ use crate::ast::{
 };
 use crate::c3;
 use crate::generics::method_signature_key_in_context;
-use crate::model::{Graph, MethodInfo, MethodMap, ReceiverKind};
-use crate::types::class_constructors;
+use crate::model::{BaseEdge, Graph, MethodInfo, MethodMap, ReceiverKind};
+use crate::types::{
+    ancestor_type_for_path_in, cast_target_key, class_constructors, class_type, type_key,
+};
 
 pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Graph {
     let classes = block.classes;
@@ -52,6 +54,7 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
     }
 
     let mut bases = vec![Vec::new(); classes.len()];
+    let mut base_edges = vec![Vec::new(); classes.len()];
     for (index, class) in classes.iter().enumerate() {
         let mut seen_bases = HashSet::new();
         for base in &class.bases {
@@ -71,14 +74,19 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
                 continue;
             }
             bases[index].push(base_index);
+            base_edges[index].push(BaseEdge {
+                base: base_index,
+                is_virtual: base.is_virtual,
+            });
         }
     }
 
     let direct_methods = collect_direct_methods(&classes, errors);
-    validate_constructors(&classes, &bases, &name_to_index, errors);
+    validate_constructors(&classes, &bases, &base_edges, &name_to_index, errors);
 
     let mros = if errors.is_empty() {
-        match c3::linearize_all(&bases) {
+        let mro_bases = virtual_aware_mro_bases(&base_edges, &bases);
+        match c3::linearize_all(&mro_bases) {
             Ok(mros) => mros,
             Err(error) => {
                 let message = error.message(&names);
@@ -93,6 +101,14 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
         }
     } else {
         vec![Vec::new(); classes.len()]
+    };
+    if errors.is_empty() {
+        validate_virtual_inheritance(&classes, &base_edges, &mros, errors);
+    }
+    let cast_target_ids = if errors.is_empty() {
+        build_cast_target_ids(&classes, &base_edges)
+    } else {
+        HashMap::new()
     };
 
     let (selected_methods, abstract_methods) = if errors.is_empty() {
@@ -109,11 +125,60 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
         classes,
         names,
         name_to_index,
+        base_edges,
         bases,
         mros,
+        cast_target_ids,
         selected_methods,
         abstract_methods,
     }
+}
+
+fn virtual_aware_mro_bases(base_edges: &[Vec<BaseEdge>], bases: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    bases
+        .iter()
+        .enumerate()
+        .map(|(class_index, direct_bases)| {
+            direct_bases
+                .iter()
+                .copied()
+                .filter(|&base| {
+                    let Some(edge) = base_edges[class_index]
+                        .iter()
+                        .find(|edge| edge.base == base)
+                    else {
+                        return true;
+                    };
+                    if !edge.is_virtual {
+                        return true;
+                    }
+
+                    !base_edges[class_index]
+                        .iter()
+                        .filter(|other| other.base != base)
+                        .any(|other| {
+                            let mut visited = HashSet::new();
+                            reaches_base(base_edges, other.base, base, &mut visited)
+                        })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn reaches_base(
+    base_edges: &[Vec<BaseEdge>],
+    current: usize,
+    target: usize,
+    visited: &mut HashSet<usize>,
+) -> bool {
+    if !visited.insert(current) {
+        return false;
+    }
+
+    base_edges[current]
+        .iter()
+        .any(|edge| edge.base == target || reaches_base(base_edges, edge.base, target, visited))
 }
 
 fn collect_direct_methods(classes: &[ClassDef], errors: &mut Vec<Error>) -> Vec<MethodMap> {
@@ -415,6 +480,7 @@ fn validate_unsupported_associated_type(
 fn validate_constructors(
     classes: &[ClassDef],
     bases: &[Vec<usize>],
+    base_edges: &[Vec<BaseEdge>],
     name_to_index: &HashMap<String, usize>,
     errors: &mut Vec<Error>,
 ) {
@@ -482,7 +548,8 @@ fn validate_constructors(
             let mut initialized_direct_bases = HashSet::new();
             for base_call in &constructor.base_calls {
                 let base_name = base_call.base.to_string();
-                if !seen_bases.insert(base_name.clone()) {
+                let base_call_key = constructor_base_call_key(base_call);
+                if !seen_bases.insert(base_call_key) {
                     errors.push(Error::new_spanned(
                         &base_call.base,
                         format!("duplicate constructor initializer for base `{base_name}`"),
@@ -498,16 +565,34 @@ fn validate_constructors(
                     continue;
                 };
 
-                if !bases[class_index].contains(&base_index) {
+                let is_direct = bases[class_index].contains(&base_index);
+                let virtual_target_count = matching_virtual_base_target_count(
+                    classes,
+                    base_edges,
+                    class_index,
+                    base_index,
+                    base_call,
+                );
+                if !is_direct && virtual_target_count == 0 {
                     errors.push(Error::new_spanned(
                         &base_call.base,
                         format!(
-                            "constructor initializer `{base_name}` must name a direct base class of `{}`",
+                            "constructor initializer `{base_name}` must name a direct base class or virtual base class of `{}`",
                             class.name
                         ),
                     ));
+                } else if !is_direct && virtual_target_count > 1 {
+                    errors.push(Error::new_spanned(
+                        &base_call.base,
+                        format!(
+                            "constructor initializer `{base_name}` is ambiguous; use `{}<...>(...)` to name the virtual base specialization",
+                            base_call.base
+                        ),
+                    ));
                 } else {
-                    initialized_direct_bases.insert(base_index);
+                    if is_direct {
+                        initialized_direct_bases.insert(base_index);
+                    }
                 }
             }
 
@@ -523,6 +608,209 @@ fn validate_constructors(
                 }
             }
         }
+    }
+}
+
+fn constructor_base_call_key(base_call: &crate::ast::ConstructorBaseCall) -> String {
+    if type_has_explicit_generics(&base_call.ty) {
+        type_key(&base_call.ty)
+    } else {
+        base_call.base.to_string()
+    }
+}
+
+fn matching_virtual_base_target_count(
+    classes: &[ClassDef],
+    base_edges: &[Vec<BaseEdge>],
+    start: usize,
+    target: usize,
+    base_call: &crate::ast::ConstructorBaseCall,
+) -> usize {
+    let mut matches = HashSet::new();
+    collect_matching_virtual_base_targets(
+        classes,
+        base_edges,
+        start,
+        start,
+        target,
+        base_call,
+        Vec::new(),
+        &mut matches,
+    );
+    matches.len()
+}
+
+fn collect_matching_virtual_base_targets(
+    classes: &[ClassDef],
+    base_edges: &[Vec<BaseEdge>],
+    root: usize,
+    current: usize,
+    target: usize,
+    base_call: &crate::ast::ConstructorBaseCall,
+    path: Vec<usize>,
+    matches: &mut HashSet<String>,
+) {
+    for edge in &base_edges[current] {
+        let mut next_path = path.clone();
+        next_path.push(edge.base);
+        if edge.is_virtual && edge.base == target {
+            let actual = ancestor_type_for_path_in(classes, root, &next_path);
+            if constructor_base_call_matches(base_call, &actual) {
+                matches.insert(type_key(&actual));
+            }
+        }
+        collect_matching_virtual_base_targets(
+            classes, base_edges, root, edge.base, target, base_call, next_path, matches,
+        );
+    }
+}
+
+fn constructor_base_call_matches(
+    base_call: &crate::ast::ConstructorBaseCall,
+    actual: &syn::Type,
+) -> bool {
+    !type_has_explicit_generics(&base_call.ty) || type_key(&base_call.ty) == type_key(actual)
+}
+
+fn type_has_explicit_generics(ty: &syn::Type) -> bool {
+    let syn::Type::Path(path) = ty else {
+        return false;
+    };
+    let Some(segment) = path.path.segments.first() else {
+        return false;
+    };
+    matches!(
+        &segment.arguments,
+        syn::PathArguments::AngleBracketed(arguments) if !arguments.args.is_empty()
+    )
+}
+
+#[derive(Debug)]
+struct InheritancePath {
+    steps: Vec<usize>,
+    has_virtual_edge: bool,
+}
+
+fn validate_virtual_inheritance(
+    classes: &[ClassDef],
+    base_edges: &[Vec<BaseEdge>],
+    mros: &[Vec<usize>],
+    errors: &mut Vec<Error>,
+) {
+    for (class_index, mro) in mros.iter().enumerate() {
+        for &ancestor in mro.iter().skip(1) {
+            let mut paths = Vec::new();
+            collect_inheritance_paths(
+                base_edges,
+                class_index,
+                ancestor,
+                Vec::new(),
+                false,
+                &mut paths,
+            );
+
+            let mut paths_by_actual: HashMap<String, Vec<&InheritancePath>> = HashMap::new();
+            for path in &paths {
+                let actual = ancestor_type_for_path_in(classes, class_index, &path.steps);
+                paths_by_actual
+                    .entry(type_key(&actual))
+                    .or_default()
+                    .push(path);
+            }
+
+            for grouped_paths in paths_by_actual.into_values() {
+                let has_virtual_path = grouped_paths.iter().any(|path| path.has_virtual_edge);
+                let has_non_virtual_path = grouped_paths.iter().any(|path| !path.has_virtual_edge);
+                if has_virtual_path && has_non_virtual_path {
+                    errors.push(Error::new_spanned(
+                        &classes[class_index].name,
+                        format!(
+                            "class `{}` inherits `{}` through both virtual and non-virtual paths; mixed virtual and non-virtual repeated bases are not supported",
+                            classes[class_index].name, classes[ancestor].name
+                        ),
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn collect_inheritance_paths(
+    base_edges: &[Vec<BaseEdge>],
+    current: usize,
+    target: usize,
+    steps: Vec<usize>,
+    has_virtual_edge: bool,
+    paths: &mut Vec<InheritancePath>,
+) {
+    for edge in &base_edges[current] {
+        let mut next_steps = steps.clone();
+        next_steps.push(edge.base);
+        let next_has_virtual_edge = has_virtual_edge || edge.is_virtual;
+
+        if edge.base == target {
+            paths.push(InheritancePath {
+                steps: next_steps,
+                has_virtual_edge: next_has_virtual_edge,
+            });
+            continue;
+        }
+
+        collect_inheritance_paths(
+            base_edges,
+            edge.base,
+            target,
+            next_steps,
+            next_has_virtual_edge,
+            paths,
+        );
+    }
+}
+
+fn build_cast_target_ids(
+    classes: &[ClassDef],
+    base_edges: &[Vec<BaseEdge>],
+) -> HashMap<String, usize> {
+    let mut ids = HashMap::new();
+
+    for (index, class) in classes.iter().enumerate() {
+        let actual = class_type(class);
+        ids.insert(cast_target_key(index, &actual), index);
+    }
+
+    let mut next_id = classes.len();
+    for start in 0..classes.len() {
+        let mut paths = Vec::new();
+        collect_all_inheritance_paths(base_edges, start, Vec::new(), &mut paths);
+        for path in paths {
+            let Some(&target) = path.last() else {
+                continue;
+            };
+            let actual = ancestor_type_for_path_in(classes, start, &path);
+            let key = cast_target_key(target, &actual);
+            ids.entry(key).or_insert_with(|| {
+                let id = next_id;
+                next_id += 1;
+                id
+            });
+        }
+    }
+
+    ids
+}
+
+fn collect_all_inheritance_paths(
+    base_edges: &[Vec<BaseEdge>],
+    current: usize,
+    steps: Vec<usize>,
+    paths: &mut Vec<Vec<usize>>,
+) {
+    for edge in &base_edges[current] {
+        let mut next_steps = steps.clone();
+        next_steps.push(edge.base);
+        paths.push(next_steps.clone());
+        collect_all_inheritance_paths(base_edges, edge.base, next_steps, paths);
     }
 }
 

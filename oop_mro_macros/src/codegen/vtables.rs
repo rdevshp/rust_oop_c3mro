@@ -81,7 +81,7 @@ fn generate_vtable_for_class_as(
     let vtable_index = vtable_slot.ancestor;
     let class = &graph.classes[class_index];
     let (impl_generics, _, where_clause) = class.generics.split_for_impl();
-    let actual_vtable_class = ancestor_type(graph, class_index, vtable_index);
+    let actual_vtable_class = ancestor_type_for_path(graph, class_index, &vtable_slot.path);
     let vtable_type = vtable_type_for_actual_class(graph, vtable_index, &actual_vtable_class);
     let vtable_constructor = vtable_ident(&graph.names[vtable_index]);
     let vtable_factory = vtable_factory_ident(graph, class_index, &vtable_slot);
@@ -126,7 +126,6 @@ fn generate_vtable_cast_function(
     vtable_slot: &VtableSlot,
     mutable: bool,
 ) -> TokenStream2 {
-    let vtable_index = vtable_slot.ancestor;
     let class = &graph.classes[class_index];
     let (impl_generics, _, where_clause) = class.generics.split_for_impl();
     let function = if mutable {
@@ -134,30 +133,34 @@ fn generate_vtable_cast_function(
     } else {
         vtable_cast_ref_function_ident(graph, class_index, vtable_slot)
     };
-    let receiver_ty = ancestor_type(graph, class_index, vtable_index);
+    let receiver_ty = ancestor_type_for_path(graph, class_index, &vtable_slot.path);
     let complete = complete_from_receiver_expr(graph, class_index, &vtable_slot.path, mutable);
-    let arms = graph.mros[class_index].iter().copied().map(|target| {
-        let pointer = if target == class_index {
+    let arms = ancestor_views(graph, class_index).into_iter().map(|view| {
+        let target = view.class_index;
+        let target_id = cast_target_id(graph, target, &view.actual);
+        let pointer = if target == class_index && view.path.is_empty() {
             if mutable {
                 quote! { complete as *mut _ as *mut () }
             } else {
                 quote! { complete as *const _ as *const () }
             }
         } else {
-            let accessor = if mutable {
-                format_ident!("__oop_as_mut_{}", graph.names[target])
-            } else {
-                format_ident!("__oop_as_{}", graph.names[target])
-            };
+            let target_ref = static_ref_expr_for_path(
+                graph,
+                class_index,
+                &view.path,
+                quote! { complete },
+                mutable,
+            );
             if mutable {
-                quote! { complete.#accessor() as *mut _ as *mut () }
+                quote! { #target_ref as *mut _ as *mut () }
             } else {
-                quote! { complete.#accessor() as *const _ as *const () }
+                quote! { #target_ref as *const _ as *const () }
             }
         };
 
         quote! {
-            #target => ::core::option::Option::Some(#pointer)
+            #target_id => ::core::option::Option::Some(#pointer)
         }
     });
 
@@ -206,15 +209,9 @@ fn generate_vtable_function(
     let class = &graph.classes[class_index];
     let (impl_generics, _, where_clause) = class.generics.split_for_impl();
     let function = vtable_function_ident(graph, class_index, vtable_slot, &method.name);
-    let receiver_ty = ancestor_type(graph, class_index, vtable_index);
+    let receiver_ty = ancestor_type_for_path(graph, class_index, &vtable_slot.path);
     let arg_idents = &method.arg_idents;
-    let substitutions = substitutions_from_context(
-        &graph.classes,
-        &graph.bases,
-        &graph.mros,
-        class_index,
-        vtable_index,
-    );
+    let substitutions = substitutions_for_class_type(&graph.classes[vtable_index], &receiver_ty);
     let arg_types = method
         .arg_types
         .iter()
@@ -251,6 +248,7 @@ fn generate_vtable_function(
                 let call = selected_virtual_impl_call(
                     graph,
                     class_index,
+                    vtable_slot,
                     selected,
                     false,
                     arg_idents,
@@ -282,6 +280,7 @@ fn generate_vtable_function(
                 let call = selected_virtual_impl_call(
                     graph,
                     class_index,
+                    vtable_slot,
                     selected,
                     true,
                     arg_idents,
@@ -320,15 +319,9 @@ fn generate_async_vtable_function(
     let function_generics = generics_with_async_lifetime(&class.generics);
     let (impl_generics, _, where_clause) = function_generics.split_for_impl();
     let function = vtable_function_ident(graph, class_index, vtable_slot, &method.name);
-    let receiver_ty = ancestor_type(graph, class_index, vtable_index);
+    let receiver_ty = ancestor_type_for_path(graph, class_index, &vtable_slot.path);
     let arg_idents = &method.arg_idents;
-    let substitutions = substitutions_from_context(
-        &graph.classes,
-        &graph.bases,
-        &graph.mros,
-        class_index,
-        vtable_index,
-    );
+    let substitutions = substitutions_for_class_type(&graph.classes[vtable_index], &receiver_ty);
     let lifetime = async_dispatch_lifetime();
     let arg_types = method
         .arg_types
@@ -370,6 +363,7 @@ fn generate_async_vtable_function(
                 let call = selected_virtual_impl_call(
                     graph,
                     class_index,
+                    vtable_slot,
                     selected,
                     false,
                     arg_idents,
@@ -405,6 +399,7 @@ fn generate_async_vtable_function(
                 let call = selected_virtual_impl_call(
                     graph,
                     class_index,
+                    vtable_slot,
                     selected,
                     true,
                     arg_idents,
@@ -468,6 +463,7 @@ fn complete_from_receiver_expr(
 fn selected_virtual_impl_call(
     graph: &Graph,
     class_index: usize,
+    vtable_slot: &VtableSlot,
     selected: &MethodInfo,
     mutable: bool,
     arg_idents: &[Ident],
@@ -485,15 +481,17 @@ fn selected_virtual_impl_call(
         };
     }
 
-    let owner_name = &graph.names[selected.owner];
-    let accessor = if mutable {
-        format_ident!("__oop_as_mut_{}", owner_name)
-    } else {
-        format_ident!("__oop_as_{}", owner_name)
-    };
+    let owner_path = selected_owner_path(graph, class_index, vtable_slot, selected.owner);
+    let owner_ref = static_ref_expr_for_path(
+        graph,
+        class_index,
+        &owner_path,
+        quote! { complete },
+        mutable,
+    );
 
     let call = quote! {
-        complete.#accessor().#method(#(#arg_idents),*)
+        (#owner_ref).#method(#(#arg_idents),*)
     };
     if wrap_unsafe {
         quote! { unsafe { #call } }
@@ -502,25 +500,66 @@ fn selected_virtual_impl_call(
     }
 }
 
+fn selected_owner_path(
+    graph: &Graph,
+    class_index: usize,
+    vtable_slot: &VtableSlot,
+    owner: usize,
+) -> Vec<usize> {
+    let vtable_index = vtable_slot.ancestor;
+    if owner == vtable_index {
+        return vtable_slot.path.clone();
+    }
+
+    if graph.mros[vtable_index].contains(&owner) {
+        let mut path = vtable_slot.path.clone();
+        if let Some(owner_suffix) = find_base_path(graph, vtable_index, owner) {
+            path.extend(owner_suffix);
+            return path;
+        }
+    }
+
+    find_base_path(graph, class_index, owner).unwrap_or_default()
+}
+
 fn offset_expr(graph: &Graph, class_index: usize, path: &[usize]) -> TokenStream2 {
     if path.is_empty() {
         return quote! { 0usize };
     }
 
     let class_ty = class_type_tokens(&graph.classes[class_index]);
-    let mut field_tokens = TokenStream2::new();
-    for &base in path {
-        let field = base_field_ident(&graph.names[base]);
-        field_tokens.extend(quote! { .#field });
+    let mut statements = Vec::new();
+    let mut current = class_index;
+    let mut previous = format_ident!("__oop_offset_ptr_0");
+
+    for (index, &base) in path.iter().enumerate() {
+        let ident = format_ident!("__oop_offset_ptr_{}", index + 1);
+        let base_ty = ancestor_type(graph, class_index, base);
+        if edge_is_virtual(graph, current, base) {
+            let field = virtual_base_field_ident(&graph.names[base]);
+            statements.push(quote! {
+                let #ident = ::core::ptr::addr_of!((*#previous).#field.__oop_value)
+                    as *const #base_ty;
+            });
+        } else {
+            let field = base_field_ident(&graph.names[base]);
+            statements.push(quote! {
+                let #ident = ::core::ptr::addr_of!((*#previous).#field)
+                    as *const #base_ty;
+            });
+        }
+        previous = ident;
+        current = base;
     }
 
     quote! {
         {
             let uninit = ::core::mem::MaybeUninit::<#class_ty>::uninit();
-            let base = uninit.as_ptr();
+            let __oop_offset_base = uninit.as_ptr();
             unsafe {
-                let field = ::core::ptr::addr_of!((*base)#field_tokens);
-                field as usize - base as usize
+                let __oop_offset_ptr_0 = __oop_offset_base;
+                #(#statements)*
+                #previous as usize - __oop_offset_base as usize
             }
         }
     }

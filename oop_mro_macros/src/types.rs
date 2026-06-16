@@ -29,6 +29,46 @@ pub(crate) fn ancestor_type(graph: &Graph, start: usize, target: usize) -> Type 
     ancestor_type_in(&graph.classes, &graph.bases, &graph.mros, start, target)
 }
 
+pub(crate) fn ancestor_type_for_path(graph: &Graph, start: usize, path: &[usize]) -> Type {
+    ancestor_type_for_path_in(&graph.classes, start, path)
+}
+
+pub(crate) fn ancestor_type_for_path_in(
+    classes: &[ClassDef],
+    start: usize,
+    path: &[usize],
+) -> Type {
+    if path.is_empty() {
+        return class_type(&classes[start]);
+    }
+
+    let mut current = start;
+    let mut substitutions = GenericSubstitutions::default();
+    let mut actual = class_type(&classes[*path.last().expect("path is not empty")]);
+    for &next in path {
+        let Some(base_spec) = classes[current]
+            .bases
+            .iter()
+            .find(|base| base.name == classes[next].name)
+        else {
+            return actual;
+        };
+        actual = substitute_type(&base_spec.ty, &substitutions);
+        substitutions = substitutions_for_class_type(&classes[next], &actual);
+        current = next;
+    }
+
+    actual
+}
+
+pub(crate) fn type_key(ty: &Type) -> String {
+    ty.to_token_stream().to_string()
+}
+
+pub(crate) fn cast_target_key(class_index: usize, actual: &Type) -> String {
+    format!("{}:{}", class_index, type_key(actual))
+}
+
 pub(crate) fn ancestor_type_in(
     classes: &[ClassDef],
     bases: &[Vec<usize>],
@@ -44,23 +84,7 @@ pub(crate) fn ancestor_type_in(
         return class_type(&classes[target]);
     };
 
-    let mut current = start;
-    let mut substitutions = GenericSubstitutions::default();
-    let mut actual = class_type(&classes[target]);
-    for next in path {
-        let Some(base_spec) = classes[current]
-            .bases
-            .iter()
-            .find(|base| base.name == classes[next].name)
-        else {
-            return actual;
-        };
-        actual = substitute_type(&base_spec.ty, &substitutions);
-        substitutions = substitutions_for_class_type(&classes[next], &actual);
-        current = next;
-    }
-
-    actual
+    ancestor_type_for_path_in(classes, start, &path)
 }
 
 pub(crate) fn vtable_type_for_class(graph: &Graph, index: usize) -> TokenStream2 {

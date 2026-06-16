@@ -98,6 +98,48 @@ oop_class! {
 }
 
 oop_class! {
+    class SharedRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn value(&self) -> usize {
+            self.value
+        }
+
+        fn set_value(&mut self, value: usize) {
+            self.value = value;
+        }
+    }
+
+    class LeftBranch: virtual SharedRoot {
+        constructor(): SharedRoot(1) {}
+    }
+
+    class RightBranch: virtual SharedRoot {
+        constructor(): SharedRoot(2) {}
+    }
+
+    class SharedDiamond: LeftBranch, RightBranch {
+        constructor(): SharedRoot(3), LeftBranch(), RightBranch() {}
+    }
+}
+
+oop_class! {
+    class Slot<T> {
+        virtual fn type_name(&self) -> &'static str {
+            core::any::type_name::<T>()
+        }
+    }
+
+    class IntSlotOwner: virtual Slot<i32> {}
+    class StringSlotOwner: virtual Slot<String> {}
+    class SpecializedSlots: IntSlotOwner, StringSlotOwner {}
+}
+
+oop_class! {
     class Test {
         virtual async unsafe fn f(&self) {}
     }
@@ -188,6 +230,28 @@ fn main() {
         &["Document2", "Tagged", "Named", "Entity"]
     );
     println!("{}", Document2::default().describe()); // Tagged -> Entity
+
+    let mut shared = SharedDiamond::new();
+    assert!(core::ptr::eq(
+        shared.as_left_branch().as_shared_root(),
+        shared.as_right_branch().as_shared_root(),
+    ));
+    shared
+        .as_right_branch_mut()
+        .as_shared_root_mut()
+        .set_value(4);
+    assert_eq!(shared.as_left_branch().as_shared_root().value(), 4);
+
+    let specialized = SpecializedSlots::default();
+    assert_eq!(
+        <SpecializedSlots as AsSlot<i32>>::as_slot(&specialized).type_name(),
+        "i32"
+    );
+    assert_eq!(
+        <SpecializedSlots as AsSlot<String>>::as_slot(&specialized).type_name(),
+        "alloc::string::String"
+    );
+
     let mut job_factory = JobFactory::new();
     println!("job id: {:?} ", job_factory.create());
     println!("job id: {:?} ", job_factory.create());

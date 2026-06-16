@@ -148,7 +148,7 @@ fn generate_borrowed_downcast_impls(graph: &Graph) -> TokenStream2 {
     let mut seen = HashSet::new();
 
     for source in 0..graph.classes.len() {
-        if !has_virtual_interface(graph, source) {
+        if !needs_runtime_metadata(graph, source) {
             continue;
         }
 
@@ -165,7 +165,7 @@ fn generate_borrowed_downcast_impls(graph: &Graph) -> TokenStream2 {
                 continue;
             }
 
-            impls.push(generate_borrowed_downcast_impl(target, &types));
+            impls.push(generate_borrowed_downcast_impl(graph, target, &types));
         }
     }
 
@@ -219,12 +219,14 @@ fn borrowed_downcast_types(
 }
 
 fn generate_borrowed_downcast_impl(
+    graph: &Graph,
     target: usize,
     types: &BorrowedDowncastTypes<'_>,
 ) -> TokenStream2 {
     let (impl_generics, _, where_clause) = types.impl_class.generics.split_for_impl();
     let source_ty = &types.source_ty;
     let target_ty = &types.target_ty;
+    let target_id = cast_target_id(graph, target, target_ty);
     let cast_ref = vtable_cast_ref_field_ident();
     let cast_mut = vtable_cast_mut_field_ident();
 
@@ -232,7 +234,7 @@ fn generate_borrowed_downcast_impl(
         impl #impl_generics ::oop_mro::OopDowncastRefTarget<#target_ty> for #source_ty #where_clause {
             fn downcast_ref_target(&self) -> ::core::option::Option<&#target_ty> {
                 let ptr = unsafe {
-                    (self.__oop_vtable.#cast_ref)(self as *const #source_ty, #target)
+                    (self.__oop_vtable.#cast_ref)(self as *const #source_ty, #target_id)
                 }?;
                 ::core::option::Option::Some(unsafe { &*(ptr as *const #target_ty) })
             }
@@ -241,7 +243,7 @@ fn generate_borrowed_downcast_impl(
         impl #impl_generics ::oop_mro::OopDowncastMutTarget<#target_ty> for #source_ty #where_clause {
             fn downcast_mut_target(&mut self) -> ::core::option::Option<&mut #target_ty> {
                 let ptr = unsafe {
-                    (self.__oop_vtable.#cast_mut)(self as *mut #source_ty, #target)
+                    (self.__oop_vtable.#cast_mut)(self as *mut #source_ty, #target_id)
                 }?;
                 ::core::option::Option::Some(unsafe { &mut *(ptr as *mut #target_ty) })
             }

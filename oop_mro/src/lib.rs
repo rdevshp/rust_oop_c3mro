@@ -2,6 +2,8 @@ extern crate self as oop_mro;
 
 pub use oop_mro_macros::oop_class;
 
+use core::mem::MaybeUninit;
+
 pub trait OopClass {
     const NAME: &'static str;
     const MRO: &'static [&'static str];
@@ -95,6 +97,53 @@ pub static EMPTY_METHOD_TABLE: MethodTable = MethodTable::empty();
 
 fn str_eq(left: &str, right: &str) -> bool {
     left.as_bytes() == right.as_bytes()
+}
+
+#[doc(hidden)]
+#[repr(C)]
+pub struct VirtualBaseSlot<T> {
+    pub __oop_value: MaybeUninit<T>,
+    pub __oop_initialized: bool,
+}
+
+impl<T> VirtualBaseSlot<T> {
+    pub const fn uninit() -> Self {
+        Self {
+            __oop_value: MaybeUninit::uninit(),
+            __oop_initialized: false,
+        }
+    }
+
+    pub fn init(&mut self, value: T) {
+        if self.__oop_initialized {
+            unsafe {
+                self.__oop_value.assume_init_drop();
+            }
+        }
+
+        self.__oop_value.write(value);
+        self.__oop_initialized = true;
+    }
+
+    pub unsafe fn assume_init_ref(&self) -> &T {
+        debug_assert!(self.__oop_initialized);
+        unsafe { self.__oop_value.assume_init_ref() }
+    }
+
+    pub unsafe fn assume_init_mut(&mut self) -> &mut T {
+        debug_assert!(self.__oop_initialized);
+        unsafe { self.__oop_value.assume_init_mut() }
+    }
+}
+
+impl<T> Drop for VirtualBaseSlot<T> {
+    fn drop(&mut self) {
+        if self.__oop_initialized {
+            unsafe {
+                self.__oop_value.assume_init_drop();
+            }
+        }
+    }
 }
 
 pub mod prelude {

@@ -82,12 +82,19 @@ impl Parse for ClassDef {
 
 #[derive(Debug, Clone)]
 pub(crate) struct BaseSpec {
+    pub(crate) is_virtual: bool,
     pub(crate) name: Ident,
     pub(crate) ty: Type,
 }
 
 impl Parse for BaseSpec {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let is_virtual = if input.peek(Token![virtual]) {
+            input.parse::<Token![virtual]>()?;
+            true
+        } else {
+            false
+        };
         let ty_path: TypePath = input.parse()?;
 
         if ty_path.qself.is_some() || ty_path.path.segments.len() != 1 {
@@ -99,6 +106,7 @@ impl Parse for BaseSpec {
 
         let name = ty_path.path.segments[0].ident.clone();
         Ok(Self {
+            is_virtual,
             name,
             ty: Type::Path(ty_path),
         })
@@ -289,6 +297,7 @@ pub(crate) struct ConstructorDef {
 #[derive(Debug)]
 pub(crate) struct ConstructorBaseCall {
     pub(crate) base: Ident,
+    pub(crate) ty: Type,
     pub(crate) args: Vec<Expr>,
 }
 
@@ -327,7 +336,17 @@ impl Parse for ConstructorDef {
 
 impl Parse for ConstructorBaseCall {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let base: Ident = input.parse()?;
+        let ty_path: TypePath = input.parse()?;
+
+        if ty_path.qself.is_some() || ty_path.path.segments.len() != 1 {
+            return Err(Error::new_spanned(
+                ty_path,
+                "constructor base initializers must be declared as `Base(...)` or `Base<...>(...)`",
+            ));
+        }
+
+        let base = ty_path.path.segments[0].ident.clone();
+        let ty = Type::Path(ty_path);
 
         let content;
         parenthesized!(content in input);
@@ -335,7 +354,7 @@ impl Parse for ConstructorBaseCall {
             .into_iter()
             .collect();
 
-        Ok(Self { base, args })
+        Ok(Self { base, ty, args })
     }
 }
 

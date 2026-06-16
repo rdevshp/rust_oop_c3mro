@@ -32,10 +32,18 @@ pub(crate) struct Graph {
     pub(crate) classes: Vec<ClassDef>,
     pub(crate) names: Vec<String>,
     pub(crate) name_to_index: HashMap<String, usize>,
+    pub(crate) base_edges: Vec<Vec<BaseEdge>>,
     pub(crate) bases: Vec<Vec<usize>>,
     pub(crate) mros: Vec<Vec<usize>>,
+    pub(crate) cast_target_ids: HashMap<String, usize>,
     pub(crate) selected_methods: Vec<MethodMap>,
     pub(crate) abstract_methods: Vec<MethodMap>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BaseEdge {
+    pub(crate) base: usize,
+    pub(crate) is_virtual: bool,
 }
 
 #[derive(Debug, Clone)]

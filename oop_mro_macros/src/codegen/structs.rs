@@ -15,17 +15,24 @@ pub(super) fn generate_struct(graph: &Graph, index: usize, class: &ClassDef) -> 
     let vis = public_if_inherited(&class.vis);
     let name = &class.name;
     let generics = &class.generics;
-    let vtable_field = has_virtual_interface(graph, index).then(|| {
+    let vtable_field = needs_runtime_metadata(graph, index).then(|| {
         let vtable_ty = vtable_type_for_class(graph, index);
         quote! {
             __oop_vtable: #vtable_ty,
         }
     });
     let base_fields = class.bases.iter().map(|base| {
-        let field = base_field_ident(&base.name.to_string());
         let base_ty = &base.ty;
-        quote! {
-            #field: #base_ty
+        if base.is_virtual {
+            let field = virtual_base_field_ident(&base.name.to_string());
+            quote! {
+                #field: ::oop_mro::VirtualBaseSlot<#base_ty>
+            }
+        } else {
+            let field = base_field_ident(&base.name.to_string());
+            quote! {
+                #field: #base_ty
+            }
         }
     });
     let fields = class.items.iter().filter_map(|item| match item {

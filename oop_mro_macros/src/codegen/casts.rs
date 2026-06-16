@@ -46,12 +46,9 @@ pub(super) fn generate_base_cast_impls(graph: &Graph) -> TokenStream2 {
         .iter()
         .enumerate()
         .flat_map(|(class_index, class)| {
-            graph.mros[class_index]
-                .iter()
-                .copied()
-                .map(move |base_index| {
-                    generate_base_cast_impl(graph, class_index, base_index, class)
-                })
+            ancestor_views(graph, class_index)
+                .into_iter()
+                .map(move |view| generate_base_cast_impl(graph, class_index, &view, class))
         });
 
     quote! {
@@ -62,24 +59,30 @@ pub(super) fn generate_base_cast_impls(graph: &Graph) -> TokenStream2 {
 fn generate_base_cast_impl(
     graph: &Graph,
     class_index: usize,
-    base_index: usize,
+    view: &AncestorView,
     class: &ClassDef,
 ) -> TokenStream2 {
+    let base_index = view.class_index;
     let (impl_generics, _, where_clause) = class.generics.split_for_impl();
     let class_ty = class_type_tokens(class);
-    let base_ty = ancestor_type(graph, class_index, base_index);
+    let base_ty = &view.actual;
     let trait_path = base_cast_trait_for_actual_class(graph, base_index, &base_ty);
     let shared_name = base_cast_method_ident(&graph.names[base_index], false);
     let mutable_name = base_cast_method_ident(&graph.names[base_index], true);
-    let shared_body = if class_index == base_index {
+    let has_virtual_edge = path_has_virtual_edge_for_path(graph, class_index, &view.path);
+    let shared_body = if class_index == base_index && view.path.is_empty() {
         quote! { self }
+    } else if has_virtual_edge {
+        dynamic_accessor_body_for_actual(graph, class_index, base_index, base_ty, false)
     } else {
-        accessor_body(graph, class_index, base_index, false)
+        static_ref_expr_for_path(graph, class_index, &view.path, quote! { self }, false)
     };
-    let mutable_body = if class_index == base_index {
+    let mutable_body = if class_index == base_index && view.path.is_empty() {
         quote! { self }
+    } else if has_virtual_edge {
+        dynamic_accessor_body_for_actual(graph, class_index, base_index, base_ty, true)
     } else {
-        accessor_body(graph, class_index, base_index, true)
+        static_ref_expr_for_path(graph, class_index, &view.path, quote! { self }, true)
     };
     let private_module = private_module_ident(graph);
 
