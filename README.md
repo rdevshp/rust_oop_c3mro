@@ -1,6 +1,8 @@
 This is an experimental project doing multiple inheritance OOP using C3 MRO in Rust that is co-developed with Codex.
 
-This project supports virtual/non-virtual inheritance (mixed virtual and non-virtual inheritance is also supported), abstract methods/classes, virtual/non-virtual methods, static/const class items, class functions, unsafe/async/const functions (const functions cannot be virtual), path-dependent and non path-dependent up/down casts, and mandatory `#[override]` attributes when a method overrides a superclass method.
+This project supports virtual/non-virtual inheritance (mixed virtual and non-virtual inheritance is also supported), abstract methods/classes, generic classes, virtual/non-virtual methods, static/const class items, class functions, unsafe/async methods, const functions (const functions cannot be virtual), path-dependent and non path-dependent up/down casts.
+
+Mandatory `#[override]` attributes are required when a method overrides a superclass method.
 
 ```rust
 use oop_mro::prelude::*;
@@ -172,6 +174,24 @@ oop_class! {
     class PathExampleDiamond: PathExampleLeft, PathExampleRight {
         constructor(): PathExampleLeft(), PathExampleRight() {}
     }
+
+    class PathExampleBranch: PathExampleLeft, PathExampleRight {
+        constructor(): PathExampleLeft(), PathExampleRight() {}
+    }
+
+    class PathExampleNested: PathExampleBranch {
+        constructor(): PathExampleBranch() {}
+    }
+
+    class PathExampleGenericBranch<T>: PathExampleLeft, PathExampleRight {
+        _marker: core::marker::PhantomData<T> = core::marker::PhantomData,
+
+        constructor(): PathExampleLeft(), PathExampleRight() {}
+    }
+
+    class PathExampleGenericNested<T>: PathExampleGenericBranch<T> {
+        constructor(): PathExampleGenericBranch() {}
+    }
 }
 
 fn path_upcast_and_downcast_examples() {
@@ -210,7 +230,125 @@ fn path_upcast_and_downcast_examples() {
             .label(),
         "left-root",
     );
+
+    long_path_upcast_and_downcast_example();
+    generic_long_path_upcast_and_downcast_example::<u8>();
+    concrete_generic_owned_long_path_upcast_and_downcast_example();
     println!("path upcast/downcast examples passed");
+}
+
+fn long_path_upcast_and_downcast_example() {
+    let nested = PathExampleNested::new();
+    let nested_left_root =
+        nested.as_base_via::<(PathExampleBranch, PathExampleLeft), PathExampleRoot>();
+    let nested_right_root =
+        nested.as_base_via::<(PathExampleBranch, PathExampleRight), PathExampleRoot>();
+
+    assert_eq!(nested_left_root.label(), "left-root");
+    assert_eq!(nested_right_root.label(), "right-root");
+    assert!(nested_left_root.downcast_ref::<PathExampleLeft>().is_some());
+    assert!(nested_left_root
+        .downcast_ref::<PathExampleRight>()
+        .is_none());
+    assert!(nested_left_root
+        .downcast_ref::<PathExampleBranch>()
+        .is_some());
+    assert!(nested_left_root
+        .downcast_ref::<PathExampleNested>()
+        .is_some());
+    assert!(nested_right_root
+        .downcast_ref::<PathExampleRight>()
+        .is_some());
+    assert!(nested_right_root
+        .downcast_ref::<PathExampleLeft>()
+        .is_none());
+    assert!(nested_right_root
+        .downcast_ref::<PathExampleBranch>()
+        .is_some());
+    assert!(nested_right_root
+        .downcast_ref::<PathExampleNested>()
+        .is_some());
+
+    let root: Box<dyn AsPathExampleRoot> =
+        Box::new(PathExampleNested::new())
+            .into_base_via::<(PathExampleBranch, PathExampleRight), dyn AsPathExampleRoot>();
+    assert_eq!(root.as_path_example_root().label(), "right-root");
+
+    let root = match root.downcast::<dyn AsPathExampleLeft>() {
+        Ok(_) => panic!("right nested root should not downcast to left path"),
+        Err(root) => root,
+    };
+    let branch = match root.downcast::<dyn AsPathExampleBranch>() {
+        Ok(branch) => branch,
+        Err(_) => panic!("right nested root should downcast to branch"),
+    };
+    let nested = match branch.downcast::<dyn AsPathExampleNested>() {
+        Ok(nested) => nested,
+        Err(_) => panic!("branch path should downcast to complete nested object"),
+    };
+
+    assert_eq!(
+        nested
+            .as_path_example_nested()
+            .as_base_via::<(PathExampleBranch, PathExampleRight), PathExampleRoot>()
+            .label(),
+        "right-root",
+    );
+}
+
+fn generic_long_path_upcast_and_downcast_example<T>() {
+    let nested = PathExampleGenericNested::<T>::new();
+    let left_root =
+        nested.as_base_via::<(PathExampleGenericBranch<T>, PathExampleLeft), PathExampleRoot>();
+    let right_root =
+        nested.as_base_via::<(PathExampleGenericBranch<T>, PathExampleRight), PathExampleRoot>();
+
+    assert_eq!(left_root.label(), "left-root");
+    assert_eq!(right_root.label(), "right-root");
+    assert!(left_root.downcast_ref::<PathExampleLeft>().is_some());
+    assert!(left_root.downcast_ref::<PathExampleRight>().is_none());
+    assert!(left_root
+        .downcast_ref::<PathExampleGenericBranch<T>>()
+        .is_some());
+    assert!(left_root
+        .downcast_ref::<PathExampleGenericNested<T>>()
+        .is_some());
+    assert!(right_root.downcast_ref::<PathExampleRight>().is_some());
+    assert!(right_root.downcast_ref::<PathExampleLeft>().is_none());
+    assert!(right_root
+        .downcast_ref::<PathExampleGenericBranch<T>>()
+        .is_some());
+    assert!(right_root
+        .downcast_ref::<PathExampleGenericNested<T>>()
+        .is_some());
+}
+
+fn concrete_generic_owned_long_path_upcast_and_downcast_example() {
+    let root: Box<dyn AsPathExampleRoot> = Box::new(PathExampleGenericNested::<u8>::new())
+        .into_base_via::<(PathExampleGenericBranch<u8>, PathExampleRight), dyn AsPathExampleRoot>(
+    );
+    assert_eq!(root.as_path_example_root().label(), "right-root");
+
+    let root = match root.downcast::<dyn AsPathExampleLeft>() {
+        Ok(_) => panic!("generic right nested root should not downcast to left path"),
+        Err(root) => root,
+    };
+    let generic_branch = match root.downcast::<dyn AsPathExampleGenericBranch<u8>>() {
+        Ok(generic_branch) => generic_branch,
+        Err(_) => panic!("generic right nested root should downcast to generic branch"),
+    };
+    let generic_nested = match generic_branch.downcast::<dyn AsPathExampleGenericNested<u8>>() {
+        Ok(generic_nested) => generic_nested,
+        Err(_) => panic!("generic branch should downcast to complete nested object"),
+    };
+
+    assert_eq!(
+        generic_nested
+            .as_path_example_generic_nested()
+            .as_base_via::<(PathExampleGenericBranch<u8>, PathExampleRight), PathExampleRoot>()
+            .label(),
+        "right-root",
+    );
 }
 
 oop_class! {

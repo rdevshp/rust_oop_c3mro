@@ -129,6 +129,7 @@ pub(super) fn generate_default_base_impl(
 ) -> TokenStream2 {
     let name = &class.name;
     let (impl_generics, ty_generics, where_clause) = class.generics.split_for_impl();
+    let turbofish = ty_generics.as_turbofish();
     let trait_name = default_base_trait_ident(&graph.names[index]);
     let vtable_initializer = needs_runtime_metadata(graph, index).then(|| {
         let vtable = vtable_factory_ident(
@@ -140,7 +141,7 @@ pub(super) fn generate_default_base_impl(
             },
         );
         quote! {
-            __oop_vtable: #vtable(),
+            __oop_vtable: #vtable #turbofish(),
         }
     });
     let base_initializers = graph.base_edges[index].iter().map(|edge| {
@@ -222,6 +223,8 @@ pub(super) fn generate_default_impl(graph: &Graph, index: usize, class: &ClassDe
 }
 
 pub(super) fn generate_vtable_init(graph: &Graph, index: usize) -> TokenStream2 {
+    let (_, ty_generics, _) = graph.classes[index].generics.split_for_impl();
+    let turbofish = ty_generics.as_turbofish();
     let virtual_base_initializers = virtual_base_views(graph, index).into_iter().map(|view| {
         let target = view.class_index;
         let slot =
@@ -237,7 +240,7 @@ pub(super) fn generate_vtable_init(graph: &Graph, index: usize) -> TokenStream2 
         let place = place_for_path(graph, index, &slot.path);
 
         quote! {
-            #place.__oop_vtable = #vtable();
+            #place.__oop_vtable = #vtable #turbofish();
         }
     });
 

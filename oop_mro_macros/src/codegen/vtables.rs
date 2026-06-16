@@ -84,7 +84,8 @@ fn generate_vtable_for_class_as(
 ) -> TokenStream2 {
     let vtable_index = vtable_slot.ancestor;
     let class = &graph.classes[class_index];
-    let (impl_generics, _, where_clause) = class.generics.split_for_impl();
+    let (impl_generics, ty_generics, where_clause) = class.generics.split_for_impl();
+    let turbofish = ty_generics.as_turbofish();
     let actual_vtable_class = ancestor_type_for_path(graph, class_index, &vtable_slot.path);
     let vtable_type = vtable_type_for_actual_class(graph, vtable_index, &actual_vtable_class);
     let vtable_constructor = vtable_ident(&graph.names[vtable_index]);
@@ -105,7 +106,7 @@ fn generate_vtable_for_class_as(
             let field = vtable_field_ident(&method.name);
             let function = vtable_function_ident(graph, class_index, &vtable_slot, &method.name);
             quote! {
-                #field: #function
+                #field: #function #turbofish
             }
         });
     let functions = interface_methods(graph, vtable_index)
@@ -120,10 +121,10 @@ fn generate_vtable_for_class_as(
         fn #vtable_factory #impl_generics () -> #vtable_type #where_clause {
             #vtable_constructor {
                 __oop_complete_class_id: #class_index,
-                #cast_ref_field: #cast_ref_function,
-                #cast_mut_field: #cast_mut_function,
-                #downcast_ref_field: #downcast_ref_function,
-                #downcast_mut_field: #downcast_mut_function,
+                #cast_ref_field: #cast_ref_function #turbofish,
+                #cast_mut_field: #cast_mut_function #turbofish,
+                #downcast_ref_field: #downcast_ref_function #turbofish,
+                #downcast_mut_field: #downcast_mut_function #turbofish,
                 #(#entries,)*
             }
         }
