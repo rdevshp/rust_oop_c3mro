@@ -209,6 +209,253 @@ fn path_upcast_and_downcast_examples() {
 }
 
 oop_class! {
+    class VirtualExampleRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn value(&self) -> usize {
+            self.value
+        }
+
+        fn set_value(&mut self, value: usize) {
+            self.value = value;
+        }
+
+        virtual fn dispatched_value(&self) -> usize {
+            self.value
+        }
+    }
+
+    class VirtualExampleLeft: virtual VirtualExampleRoot {
+        constructor(): VirtualExampleRoot(1) {}
+    }
+
+    class VirtualExampleRight: virtual VirtualExampleRoot {
+        constructor(): VirtualExampleRoot(2) {}
+    }
+
+    class VirtualExampleDiamond: VirtualExampleLeft, VirtualExampleRight {
+        constructor(): VirtualExampleRoot(10), VirtualExampleLeft(), VirtualExampleRight() {}
+
+        #[override]
+        virtual fn dispatched_value(&self) -> usize {
+            self.as_virtual_example_root().value() + 100
+        }
+    }
+}
+
+fn virtual_inheritance_examples() {
+    let mut diamond = VirtualExampleDiamond::new();
+
+    assert!(core::ptr::eq(
+        diamond.as_virtual_example_left().as_virtual_example_root(),
+        diamond.as_virtual_example_right().as_virtual_example_root(),
+    ));
+    assert!(core::ptr::eq(
+        diamond.as_virtual_example_root(),
+        diamond.as_virtual_example_left().as_virtual_example_root(),
+    ));
+    assert_eq!(diamond.as_virtual_example_root().value(), 10);
+    assert_eq!(diamond.as_virtual_example_root().dispatched_value(), 110);
+
+    diamond
+        .as_virtual_example_right_mut()
+        .as_virtual_example_root_mut()
+        .set_value(33);
+    assert_eq!(
+        diamond
+            .as_virtual_example_left()
+            .as_virtual_example_root()
+            .value(),
+        33
+    );
+    assert_eq!(diamond.as_virtual_example_root().dispatched_value(), 133);
+
+    let root = diamond.as_virtual_example_root();
+    assert!(root.downcast_ref::<VirtualExampleLeft>().is_some());
+    assert!(root.downcast_ref::<VirtualExampleRight>().is_some());
+    assert!(root.downcast_ref::<VirtualExampleDiamond>().is_some());
+
+    diamond
+        .as_virtual_example_root_mut()
+        .downcast_mut::<VirtualExampleDiamond>()
+        .expect("virtual root should downcast mutably to complete diamond")
+        .as_virtual_example_root_mut()
+        .set_value(41);
+    assert_eq!(diamond.as_virtual_example_root().value(), 41);
+
+    let root: Box<dyn AsVirtualExampleRoot> = Box::new(VirtualExampleDiamond::new());
+    assert_eq!(root.as_virtual_example_root().dispatched_value(), 110);
+
+    let left = match root.downcast::<dyn AsVirtualExampleLeft>() {
+        Ok(left) => left,
+        Err(_) => panic!("virtual root should downcast to left branch"),
+    };
+    assert_eq!(
+        left.as_virtual_example_left()
+            .as_virtual_example_root()
+            .value(),
+        10
+    );
+
+    let diamond = match left.downcast::<dyn AsVirtualExampleDiamond>() {
+        Ok(diamond) => diamond,
+        Err(_) => panic!("left branch should downcast to complete diamond"),
+    };
+    assert_eq!(
+        diamond
+            .as_virtual_example_diamond()
+            .as_virtual_example_root()
+            .dispatched_value(),
+        110
+    );
+    println!("virtual inheritance examples passed");
+}
+
+oop_class! {
+    class MixedExampleRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        virtual fn value(&self) -> usize {
+            self.value
+        }
+
+        fn set_value(&mut self, value: usize) {
+            self.value = value;
+        }
+    }
+
+    class MixedExampleVirtualBranch: virtual MixedExampleRoot {
+        constructor(): MixedExampleRoot(1) {}
+    }
+
+    class MixedExampleConcreteBranch: MixedExampleRoot {
+        constructor(): MixedExampleRoot(2) {}
+    }
+
+    class MixedExampleDiamond: MixedExampleVirtualBranch, MixedExampleConcreteBranch {
+        constructor(): MixedExampleRoot(10), MixedExampleVirtualBranch(), MixedExampleConcreteBranch() {}
+    }
+}
+
+fn mixed_inheritance_path_cast_examples() {
+    let mut diamond = MixedExampleDiamond::new();
+    let virtual_root = diamond.as_base_via::<MixedExampleVirtualBranch, MixedExampleRoot>();
+    let concrete_root = diamond.as_base_via::<MixedExampleConcreteBranch, MixedExampleRoot>();
+
+    assert_ne!(
+        virtual_root as *const MixedExampleRoot,
+        concrete_root as *const MixedExampleRoot,
+    );
+    assert_eq!(virtual_root.value(), 10);
+    assert_eq!(concrete_root.value(), 2);
+
+    assert!(virtual_root
+        .downcast_ref::<MixedExampleVirtualBranch>()
+        .is_some());
+    assert!(virtual_root
+        .downcast_ref::<MixedExampleConcreteBranch>()
+        .is_none());
+    assert!(concrete_root
+        .downcast_ref::<MixedExampleConcreteBranch>()
+        .is_some());
+    assert!(concrete_root
+        .downcast_ref::<MixedExampleVirtualBranch>()
+        .is_none());
+    assert!(virtual_root.downcast_ref::<MixedExampleDiamond>().is_some());
+    assert!(concrete_root
+        .downcast_ref::<MixedExampleDiamond>()
+        .is_some());
+
+    diamond
+        .as_base_via_mut::<MixedExampleConcreteBranch, MixedExampleRoot>()
+        .set_value(22);
+    diamond
+        .as_base_via_mut::<MixedExampleVirtualBranch, MixedExampleRoot>()
+        .set_value(33);
+    assert_eq!(
+        diamond
+            .as_base_via::<MixedExampleVirtualBranch, MixedExampleRoot>()
+            .value(),
+        33
+    );
+    assert_eq!(
+        diamond
+            .as_base_via::<MixedExampleConcreteBranch, MixedExampleRoot>()
+            .value(),
+        22
+    );
+
+    let diamond_trait: &dyn AsMixedExampleDiamond = &diamond;
+    assert_eq!(
+        diamond_trait
+            .as_base_via::<MixedExampleVirtualBranch, MixedExampleRoot>()
+            .value(),
+        33
+    );
+    assert_eq!(
+        diamond_trait
+            .as_base_via::<MixedExampleConcreteBranch, MixedExampleRoot>()
+            .value(),
+        22
+    );
+
+    let root: Box<dyn AsMixedExampleRoot> = Box::new(MixedExampleDiamond::new())
+        .into_base_via::<MixedExampleConcreteBranch, dyn AsMixedExampleRoot>(
+    );
+    assert_eq!(root.as_mixed_example_root().value(), 2);
+
+    let root = match root.downcast::<dyn AsMixedExampleVirtualBranch>() {
+        Ok(_) => panic!("concrete root path should not downcast to virtual branch"),
+        Err(root) => root,
+    };
+    let concrete = match root.downcast::<dyn AsMixedExampleConcreteBranch>() {
+        Ok(concrete) => concrete,
+        Err(_) => panic!("concrete root path should downcast to concrete branch"),
+    };
+    let diamond = match concrete.downcast::<dyn AsMixedExampleDiamond>() {
+        Ok(diamond) => diamond,
+        Err(_) => panic!("concrete branch should downcast to complete diamond"),
+    };
+    assert_eq!(
+        diamond
+            .as_mixed_example_diamond()
+            .as_base_via::<MixedExampleConcreteBranch, MixedExampleRoot>()
+            .value(),
+        2
+    );
+
+    let root: Box<dyn AsMixedExampleRoot> = Box::new(MixedExampleDiamond::new())
+        .into_base_via::<MixedExampleVirtualBranch, dyn AsMixedExampleRoot>(
+    );
+    assert_eq!(root.as_mixed_example_root().value(), 10);
+
+    let root = match root.downcast::<dyn AsMixedExampleConcreteBranch>() {
+        Ok(_) => panic!("virtual root path should not downcast to concrete branch"),
+        Err(root) => root,
+    };
+    let virtual_branch = match root.downcast::<dyn AsMixedExampleVirtualBranch>() {
+        Ok(virtual_branch) => virtual_branch,
+        Err(_) => panic!("virtual root path should downcast to virtual branch"),
+    };
+    assert_eq!(
+        virtual_branch
+            .as_mixed_example_virtual_branch()
+            .as_mixed_example_root()
+            .value(),
+        10
+    );
+    println!("mixed inheritance path cast examples passed");
+}
+
+oop_class! {
     class Test {
         virtual async unsafe fn f(&self) {}
     }
@@ -293,6 +540,8 @@ fn main() {
     animal_examples();
     document_examples();
     path_upcast_and_downcast_examples();
+    virtual_inheritance_examples();
+    mixed_inheritance_path_cast_examples();
     let job_factory = job_factory_examples();
     ticket_registry_examples();
     job_factory_downcast_example(job_factory);
