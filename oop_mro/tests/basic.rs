@@ -385,6 +385,34 @@ oop_class! {
         }
     }
 
+    class MixedRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn value(&self) -> usize {
+            self.value
+        }
+
+        fn set_value(&mut self, value: usize) {
+            self.value = value;
+        }
+    }
+
+    class MixedVirtualLeft: virtual MixedRoot {
+        constructor(): MixedRoot(1) {}
+    }
+
+    class MixedConcreteRight: MixedRoot {
+        constructor(): MixedRoot(2) {}
+    }
+
+    class MixedDiamond: MixedVirtualLeft, MixedConcreteRight {
+        constructor(): MixedRoot(10), MixedVirtualLeft(), MixedConcreteRight() {}
+    }
+
     class SpecializedSlot<T> {
         label: String,
 
@@ -789,6 +817,42 @@ fn virtual_base_can_be_reached_by_direct_and_indirect_edges() {
         .set_value(19);
     assert_eq!(diamond.as_direct_indirect_virtual_root().value(), 19);
     assert_eq!(diamond.as_direct_indirect_virtual_root().dispatched(), 119);
+}
+
+#[test]
+fn mixed_virtual_and_non_virtual_paths_create_distinct_base_subobjects() {
+    let mut diamond = MixedDiamond::new();
+
+    assert!(core::ptr::eq(
+        diamond.as_mixed_root(),
+        diamond.as_mixed_virtual_left().as_mixed_root(),
+    ));
+    assert_ne!(
+        diamond.as_mixed_virtual_left().as_mixed_root() as *const MixedRoot,
+        diamond.as_mixed_concrete_right().as_mixed_root() as *const MixedRoot,
+    );
+    assert_eq!(diamond.as_mixed_root().value(), 10);
+    assert_eq!(diamond.as_mixed_concrete_right().as_mixed_root().value(), 2);
+
+    diamond
+        .as_mixed_concrete_right_mut()
+        .as_mixed_root_mut()
+        .set_value(22);
+    assert_eq!(diamond.as_mixed_root().value(), 10);
+    assert_eq!(
+        diamond.as_mixed_concrete_right().as_mixed_root().value(),
+        22
+    );
+
+    diamond
+        .as_mixed_virtual_left_mut()
+        .as_mixed_root_mut()
+        .set_value(33);
+    assert_eq!(diamond.as_mixed_root().value(), 33);
+    assert_eq!(
+        diamond.as_mixed_concrete_right().as_mixed_root().value(),
+        22
+    );
 }
 
 #[test]

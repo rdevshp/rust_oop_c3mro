@@ -1,5 +1,0 @@
-error: class `Diamond` inherits `Root` through both virtual and non-virtual paths; mixed virtual and non-virtual repeated bases are not supported
- --> tests/trybuild/fail_mixed_virtual_nonvirtual_base.rs:7:11
-  |
-7 |     class Diamond: Left, Right {}
-  |           ^^^^^^^

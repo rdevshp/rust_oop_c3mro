@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens};
 use syn::{parse_quote, GenericParam, Generics, Ident, Type};
 
@@ -37,6 +37,7 @@ mod structs;
 mod vtables;
 
 pub(crate) fn generate(graph: &Graph) -> TokenStream2 {
+    let warnings = generate_compile_warnings(graph);
     let private_module = structs::generate_private_module(graph);
     let static_fields = statics::generate_static_fields(graph);
     let vtable_structs = graph
@@ -65,6 +66,7 @@ pub(crate) fn generate(graph: &Graph) -> TokenStream2 {
     let downcast_impls = downcast::generate_downcast_impls(graph);
 
     quote! {
+        #warnings
         #private_module
         #static_fields
         #(#vtable_structs)*
@@ -75,6 +77,23 @@ pub(crate) fn generate(graph: &Graph) -> TokenStream2 {
         #vtable_items
         #downcast_impls
     }
+}
+
+fn generate_compile_warnings(graph: &Graph) -> TokenStream2 {
+    graph
+        .warnings
+        .iter()
+        .map(|warning| {
+            let message = syn::LitStr::new(&warning.message, Span::call_site());
+            quote! {
+                const _: () = {
+                    #[deprecated(note = #message)]
+                    const __OOP_MRO_WARNING: () = ();
+                    let _ = __OOP_MRO_WARNING;
+                };
+            }
+        })
+        .collect()
 }
 
 fn interface_methods(graph: &Graph, index: usize) -> Vec<MethodInfo> {

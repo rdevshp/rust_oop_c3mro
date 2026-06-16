@@ -14,7 +14,8 @@ use crate::ast::{
 };
 use crate::c3;
 use crate::generics::method_signature_key_in_context;
-use crate::model::{BaseEdge, Graph, MethodInfo, MethodMap, ReceiverKind};
+use crate::model::{BaseEdge, CompileWarning, Graph, MethodInfo, MethodMap, ReceiverKind};
+use crate::names::to_snake;
 use crate::types::{
     ancestor_type_for_path_in, cast_target_key, class_constructors, class_type, type_key,
 };
@@ -102,8 +103,9 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
     } else {
         vec![Vec::new(); classes.len()]
     };
+    let mut warnings = Vec::new();
     if errors.is_empty() {
-        validate_virtual_inheritance(&classes, &base_edges, &mros, errors);
+        validate_virtual_inheritance(&classes, &base_edges, &mros, &mut warnings);
     }
     let cast_target_ids = if errors.is_empty() {
         build_cast_target_ids(&classes, &base_edges)
@@ -129,6 +131,7 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
         bases,
         mros,
         cast_target_ids,
+        warnings,
         selected_methods,
         abstract_methods,
     }
@@ -695,7 +698,7 @@ fn validate_virtual_inheritance(
     classes: &[ClassDef],
     base_edges: &[Vec<BaseEdge>],
     mros: &[Vec<usize>],
-    errors: &mut Vec<Error>,
+    warnings: &mut Vec<CompileWarning>,
 ) {
     for (class_index, mro) in mros.iter().enumerate() {
         for &ancestor in mro.iter().skip(1) {
@@ -722,13 +725,15 @@ fn validate_virtual_inheritance(
                 let has_virtual_path = grouped_paths.iter().any(|path| path.has_virtual_edge);
                 let has_non_virtual_path = grouped_paths.iter().any(|path| !path.has_virtual_edge);
                 if has_virtual_path && has_non_virtual_path {
-                    errors.push(Error::new_spanned(
-                        &classes[class_index].name,
-                        format!(
-                            "class `{}` inherits `{}` through both virtual and non-virtual paths; mixed virtual and non-virtual repeated bases are not supported",
-                            classes[class_index].name, classes[ancestor].name
+                    warnings.push(CompileWarning {
+                        message: format!(
+                            "mixed virtual and non-virtual inheritance: class `{}` inherits `{}` through both virtual and non-virtual paths; this creates distinct `{}` subobjects and generated `as_{}` accessors use the first matching path",
+                            classes[class_index].name,
+                            classes[ancestor].name,
+                            classes[ancestor].name,
+                            to_snake(&classes[ancestor].name.to_string())
                         ),
-                    ));
+                    });
                     break;
                 }
             }
