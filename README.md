@@ -17,7 +17,7 @@ oop_class! {
     abstract class Mammal: Animal, Serializable {
         typ: String,
 
-        constructor() {
+        constructor(): Animal(), Serializable() {
             self.typ = String::from("mammal");
         }
         #[override]
@@ -32,7 +32,7 @@ oop_class! {
     class Kangaroo: Mammal {
         name: String,
 
-        constructor(name: String) {
+        constructor(name: String): Mammal() {
             self.name = name;
         }
         #[override]
@@ -51,7 +51,7 @@ oop_class! {
     class Dog: Mammal {
         name: String,
 
-        constructor(name: String) {
+        constructor(name: String): Mammal() {
             self.name = name;
         }
         #[override]
@@ -69,123 +69,7 @@ oop_class! {
     }
 }
 
-oop_class! {
-    class Entity {
-        virtual fn describe(&self) -> String {
-            "Entity".into()
-        }
-    }
-
-    class Named: Entity {
-        #[override]
-        virtual fn describe(&self) -> String {
-            format!("Named -> {}", super_call!(Entity::describe, self))
-        }
-    }
-
-    class Tagged: Entity {
-        #[override]
-        virtual fn describe(&self) -> String {
-            format!("Tagged -> {}", super_call!(Entity::describe, self))
-        }
-    }
-
-    class Document: Named, Tagged {
-    }
-
-    class Document2: Tagged, Named {
-    }
-}
-
-oop_class! {
-    class SharedRoot {
-        value: usize,
-
-        constructor(value: usize) {
-            self.value = value;
-        }
-
-        fn value(&self) -> usize {
-            self.value
-        }
-
-        fn set_value(&mut self, value: usize) {
-            self.value = value;
-        }
-    }
-
-    class LeftBranch: virtual SharedRoot {
-        constructor(): SharedRoot(1) {}
-    }
-
-    class RightBranch: virtual SharedRoot {
-        constructor(): SharedRoot(2) {}
-    }
-
-    class SharedDiamond: LeftBranch, RightBranch {
-        constructor(): SharedRoot(3), LeftBranch(), RightBranch() {}
-    }
-}
-
-oop_class! {
-    class Slot<T> {
-        virtual fn type_name(&self) -> &'static str {
-            core::any::type_name::<T>()
-        }
-    }
-
-    class IntSlotOwner: virtual Slot<i32> {}
-    class StringSlotOwner: virtual Slot<String> {}
-    class SpecializedSlots: IntSlotOwner, StringSlotOwner {}
-}
-
-oop_class! {
-    class Test {
-        virtual async unsafe fn f(&self) {}
-    }
-}
-#[derive(Debug)]
-#[allow(dead_code)]
-struct Job {
-    id: u32,
-}
-oop_class! {
-    abstract class Factory<T> {
-        abstract virtual fn create(&mut self) -> T;
-    }
-    class JobFactory: Factory<Job> {
-        id: u32 = 50,
-        constructor() {}
-        #[override]
-        virtual fn create(&mut self) -> Job {
-            let r = self.id;
-            self.id += 1;
-            Job { id: r }
-        }
-    }
-}
-
-oop_class! {
-    class TicketRegistry {
-        pub const PREFIX: &'static str = "ticket";
-        const FIRST_ID: usize = 1000;
-        static NEXT_ID: AtomicUsize = AtomicUsize::new(1000);
-
-        fn reset_for_example() {
-            Self::NEXT_ID.store(Self::FIRST_ID, Ordering::Relaxed);
-        }
-
-        fn next_id() -> usize {
-            Self::NEXT_ID.fetch_add(1, Ordering::Relaxed)
-        }
-
-        fn next_label() -> String {
-            format!("{}-{}", Self::PREFIX, Self::next_id())
-        }
-    }
-}
-
-fn main() {
+fn animal_examples() {
     let dog = Dog::new(String::from("Dog1"));
     let kangaroo = Kangaroo::new(String::from("Kangaroo1"));
     let v: Vec<&Mammal> = vec![dog.as_mammal(), kangaroo.as_mammal()];
@@ -219,7 +103,37 @@ fn main() {
             }
         }
     }
+}
 
+oop_class! {
+    class Entity {
+        virtual fn describe(&self) -> String {
+            "Entity".into()
+        }
+    }
+
+    class Named: Entity {
+        #[override]
+        virtual fn describe(&self) -> String {
+            format!("Named -> {}", super_call!(Entity::describe, self))
+        }
+    }
+
+    class Tagged: Entity {
+        #[override]
+        virtual fn describe(&self) -> String {
+            format!("Tagged -> {}", super_call!(Entity::describe, self))
+        }
+    }
+
+    class Document: Named, Tagged {
+    }
+
+    class Document2: Tagged, Named {
+    }
+}
+
+fn document_examples() {
     assert_eq!(
         <Document as OopClass>::MRO,
         &["Document", "Named", "Tagged", "Entity"]
@@ -230,39 +144,108 @@ fn main() {
         &["Document2", "Tagged", "Named", "Entity"]
     );
     println!("{}", Document2::default().describe()); // Tagged -> Entity
+}
 
-    let mut shared = SharedDiamond::new();
-    assert!(core::ptr::eq(
-        shared.as_left_branch().as_shared_root(),
-        shared.as_right_branch().as_shared_root(),
-    ));
-    shared
-        .as_right_branch_mut()
-        .as_shared_root_mut()
-        .set_value(4);
-    assert_eq!(shared.as_left_branch().as_shared_root().value(), 4);
+oop_class! {
+    class PathExampleRoot {
+        label: &'static str,
 
-    let specialized = SpecializedSlots::default();
+        constructor(label: &'static str) {
+            self.label = label;
+        }
+
+        virtual fn label(&self) -> &'static str {
+            self.label
+        }
+    }
+
+    class PathExampleLeft: PathExampleRoot {
+        constructor(): PathExampleRoot("left-root") {}
+    }
+
+    class PathExampleRight: PathExampleRoot {
+        constructor(): PathExampleRoot("right-root") {}
+    }
+
+    class PathExampleDiamond: PathExampleLeft, PathExampleRight {
+        constructor(): PathExampleLeft(), PathExampleRight() {}
+    }
+}
+
+fn path_upcast_and_downcast_examples() {
+    let diamond = PathExampleDiamond::new();
+    let left_root = diamond.as_base_via::<PathExampleLeft, PathExampleRoot>();
+    let right_root = diamond.as_base_via::<PathExampleRight, PathExampleRoot>();
+
+    assert_eq!(left_root.label(), "left-root");
+    assert_eq!(right_root.label(), "right-root");
+    assert!(left_root.downcast_ref::<PathExampleLeft>().is_some());
+    assert!(left_root.downcast_ref::<PathExampleRight>().is_none());
+    assert!(right_root.downcast_ref::<PathExampleRight>().is_some());
+    assert!(right_root.downcast_ref::<PathExampleLeft>().is_none());
+
+    let root: Box<dyn AsPathExampleRoot> = Box::new(PathExampleDiamond::new())
+        .into_base_via::<PathExampleRight, dyn AsPathExampleRoot>();
+    assert_eq!(root.as_path_example_root().label(), "right-root");
+
+    let root = match root.downcast::<dyn AsPathExampleLeft>() {
+        Ok(_) => panic!("right root should not downcast to left path"),
+        Err(root) => root,
+    };
+    let right = match root.downcast::<dyn AsPathExampleRight>() {
+        Ok(right) => right,
+        Err(_) => panic!("right root should downcast to right path"),
+    };
+    let diamond = match right.downcast::<dyn AsPathExampleDiamond>() {
+        Ok(diamond) => diamond,
+        Err(_) => panic!("right path should downcast to complete diamond"),
+    };
+
     assert_eq!(
-        <SpecializedSlots as AsSlot<i32>>::as_slot(&specialized).type_name(),
-        "i32"
+        diamond
+            .as_path_example_diamond()
+            .as_base_via::<PathExampleLeft, PathExampleRoot>()
+            .label(),
+        "left-root",
     );
-    assert_eq!(
-        <SpecializedSlots as AsSlot<String>>::as_slot(&specialized).type_name(),
-        "alloc::string::String"
-    );
+    println!("path upcast/downcast examples passed");
+}
 
+oop_class! {
+    class Test {
+        virtual async unsafe fn f(&self) {}
+    }
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct Job {
+    id: u32,
+}
+oop_class! {
+    abstract class Factory<T> {
+        abstract virtual fn create(&mut self) -> T;
+    }
+    class JobFactory: Factory<Job> {
+        id: u32 = 50,
+        constructor(): Factory() {}
+        #[override]
+        virtual fn create(&mut self) -> Job {
+            let r = self.id;
+            self.id += 1;
+            Job { id: r }
+        }
+    }
+}
+
+fn job_factory_examples() -> JobFactory {
     let mut job_factory = JobFactory::new();
     println!("job id: {:?} ", job_factory.create());
     println!("job id: {:?} ", job_factory.create());
+    job_factory
+}
 
-    TicketRegistry::reset_for_example();
-    assert_eq!(TicketRegistry::PREFIX, "ticket");
-    assert_eq!(TicketRegistry::next_label(), "ticket-1000");
-    assert_eq!(TicketRegistry::next_id(), 1001);
-    assert_eq!(TicketRegistry::NEXT_ID.load(Ordering::Relaxed), 1002);
-    println!("next ticket: {}", TicketRegistry::next_label());
-
+fn job_factory_downcast_example(job_factory: JobFactory) {
     // checked downcast
     let factory: Box<dyn AsFactory<Job>> = Box::new(job_factory);
     let factory_downcast_result = factory.downcast::<dyn AsJobFactory>();
@@ -278,5 +261,43 @@ fn main() {
             println!("failed to downcast factory");
         }
     }
+}
+
+oop_class! {
+    class TicketRegistry {
+        pub const PREFIX: &'static str = "ticket";
+        const FIRST_ID: usize = 1000;
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(1000);
+
+        fn reset_for_example() {
+            Self::NEXT_ID.store(Self::FIRST_ID, Ordering::Relaxed);
+        }
+
+        fn next_id() -> usize {
+            Self::NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        }
+
+        fn next_label() -> String {
+            format!("{}-{}", Self::PREFIX, Self::next_id())
+        }
+    }
+}
+
+fn ticket_registry_examples() {
+    TicketRegistry::reset_for_example();
+    assert_eq!(TicketRegistry::PREFIX, "ticket");
+    assert_eq!(TicketRegistry::next_label(), "ticket-1000");
+    assert_eq!(TicketRegistry::next_id(), 1001);
+    assert_eq!(TicketRegistry::NEXT_ID.load(Ordering::Relaxed), 1002);
+    println!("next ticket: {}", TicketRegistry::next_label());
+}
+
+fn main() {
+    animal_examples();
+    document_examples();
+    path_upcast_and_downcast_examples();
+    let job_factory = job_factory_examples();
+    ticket_registry_examples();
+    job_factory_downcast_example(job_factory);
 }
 ```
