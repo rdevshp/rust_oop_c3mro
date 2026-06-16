@@ -238,7 +238,8 @@ fn generate_concrete_owned_base_via_items(
     view: &BaseViaView,
     source_class: &ClassDef,
 ) -> TokenStream2 {
-    let wrapper = owned_base_via_wrapper_ident("Concrete", source_index, source_index, via_index);
+    let wrapper =
+        owned_base_via_wrapper_ident(graph, "Concrete", source_index, source_index, via_index);
     let wrapper_items = generate_owned_base_via_wrapper(
         graph,
         &wrapper,
@@ -296,6 +297,7 @@ fn generate_dyn_owned_base_via_items(
         .enumerate()
         .map(|(candidate_index, candidate)| {
             let wrapper = owned_base_via_dyn_wrapper_ident(
+                graph,
                 candidate.complete,
                 source_index,
                 via_index,
@@ -446,13 +448,16 @@ fn add_static_type_param_bounds(generics: &mut Generics) {
 }
 
 fn owned_base_via_wrapper_ident(
+    graph: &Graph,
     kind: &str,
     complete_index: usize,
     source_index: usize,
     via_index: usize,
 ) -> Ident {
+    let prefix = to_snake(&graph.names[0]);
     format_ident!(
-        "__oop_OwnedVia_{}_{}_{}_{}",
+        "__oop_OwnedVia_{}_{}_{}_{}_{}",
+        prefix,
         kind,
         complete_index,
         source_index,
@@ -461,13 +466,16 @@ fn owned_base_via_wrapper_ident(
 }
 
 fn owned_base_via_dyn_wrapper_ident(
+    graph: &Graph,
     complete_index: usize,
     source_index: usize,
     via_index: usize,
     candidate_index: usize,
 ) -> Ident {
+    let prefix = to_snake(&graph.names[0]);
     format_ident!(
-        "__oop_OwnedVia_Dyn_{}_{}_{}_{}",
+        "__oop_OwnedVia_{}_Dyn_{}_{}_{}_{}",
+        prefix,
         complete_index,
         source_index,
         via_index,

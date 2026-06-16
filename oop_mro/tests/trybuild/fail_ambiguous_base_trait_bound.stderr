@@ -37,7 +37,7 @@ help: the trait `AsRoot` is not implemented for `Diamond`
              __oop_OwnedDowncast_root_2_0_2_0_0
              __oop_OwnedDowncast_root_3_0_1_0_1
              __oop_OwnedDowncast_root_3_0_2_0_1
-             __oop_OwnedVia_Concrete_3_3_0
+             __oop_OwnedVia_root_Concrete_3_3_0
            and $N others
 note: required by a bound in `require_root`
   --> tests/trybuild/fail_ambiguous_base_trait_bound.rs:10:20

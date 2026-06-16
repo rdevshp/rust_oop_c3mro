@@ -36,6 +36,6 @@ help: the trait `AsSlot<i32>` is not implemented for `Diamond`
              `__oop_OwnedDowncast_slot_2_0_2_0_0` implements `AsSlot<i32>`
              `__oop_OwnedDowncast_slot_3_0_1_0_1` implements `AsSlot<i32>`
              `__oop_OwnedDowncast_slot_3_0_2_0_1` implements `AsSlot<i32>`
-             `__oop_OwnedVia_Concrete_3_3_0` implements `AsSlot<i32>`
+             `__oop_OwnedVia_slot_Concrete_3_3_0` implements `AsSlot<i32>`
            and $N others
    = note: this error originates in the macro `oop_class` (in Nightly builds, run with -Z macro-backtrace for more info)
