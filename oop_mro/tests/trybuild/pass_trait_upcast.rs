@@ -34,11 +34,9 @@ oop_class! {
 }
 
 fn main() {
-    let mammal: Box<dyn AsMammal> = Box::new(Dog::default());
-    let animal: Box<dyn AsAnimal> = mammal;
+    let animal: Box<dyn AsAnimal> = Box::new(Dog::default());
     assert_eq!(animal.as_animal().speak(), "woof");
 
-    let kangaroo: Box<dyn AsKangaroo> = Box::new(Kangaroo::default());
-    let walker: Box<dyn AsWalker> = kangaroo;
+    let walker: Box<dyn AsWalker> = Box::new(Kangaroo::default());
     assert_eq!(walker.as_walker().legs(), 2);
 }

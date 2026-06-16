@@ -14,8 +14,7 @@ use crate::ast::{
 };
 use crate::c3;
 use crate::generics::method_signature_key_in_context;
-use crate::model::{BaseEdge, CompileWarning, Graph, MethodInfo, MethodMap, ReceiverKind};
-use crate::names::to_snake;
+use crate::model::{BaseEdge, Graph, MethodInfo, MethodMap, ReceiverKind};
 use crate::types::{
     ancestor_type_for_path_in, cast_target_key, class_constructors, class_type, type_key,
 };
@@ -103,10 +102,7 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
     } else {
         vec![Vec::new(); classes.len()]
     };
-    let mut warnings = Vec::new();
-    if errors.is_empty() {
-        validate_virtual_inheritance(&classes, &base_edges, &mros, &mut warnings);
-    }
+    let warnings = Vec::new();
     let cast_target_ids = if errors.is_empty() {
         build_cast_target_ids(&classes, &base_edges)
     } else {
@@ -686,91 +682,6 @@ fn type_has_explicit_generics(ty: &syn::Type) -> bool {
         &segment.arguments,
         syn::PathArguments::AngleBracketed(arguments) if !arguments.args.is_empty()
     )
-}
-
-#[derive(Debug)]
-struct InheritancePath {
-    steps: Vec<usize>,
-    has_virtual_edge: bool,
-}
-
-fn validate_virtual_inheritance(
-    classes: &[ClassDef],
-    base_edges: &[Vec<BaseEdge>],
-    mros: &[Vec<usize>],
-    warnings: &mut Vec<CompileWarning>,
-) {
-    for (class_index, mro) in mros.iter().enumerate() {
-        for &ancestor in mro.iter().skip(1) {
-            let mut paths = Vec::new();
-            collect_inheritance_paths(
-                base_edges,
-                class_index,
-                ancestor,
-                Vec::new(),
-                false,
-                &mut paths,
-            );
-
-            let mut paths_by_actual: HashMap<String, Vec<&InheritancePath>> = HashMap::new();
-            for path in &paths {
-                let actual = ancestor_type_for_path_in(classes, class_index, &path.steps);
-                paths_by_actual
-                    .entry(type_key(&actual))
-                    .or_default()
-                    .push(path);
-            }
-
-            for grouped_paths in paths_by_actual.into_values() {
-                let has_virtual_path = grouped_paths.iter().any(|path| path.has_virtual_edge);
-                let has_non_virtual_path = grouped_paths.iter().any(|path| !path.has_virtual_edge);
-                if has_virtual_path && has_non_virtual_path {
-                    warnings.push(CompileWarning {
-                        message: format!(
-                            "mixed virtual and non-virtual inheritance: class `{}` inherits `{}` through both virtual and non-virtual paths; this creates distinct `{}` subobjects and generated `as_{}` accessors use the first matching path",
-                            classes[class_index].name,
-                            classes[ancestor].name,
-                            classes[ancestor].name,
-                            to_snake(&classes[ancestor].name.to_string())
-                        ),
-                    });
-                    break;
-                }
-            }
-        }
-    }
-}
-
-fn collect_inheritance_paths(
-    base_edges: &[Vec<BaseEdge>],
-    current: usize,
-    target: usize,
-    steps: Vec<usize>,
-    has_virtual_edge: bool,
-    paths: &mut Vec<InheritancePath>,
-) {
-    for edge in &base_edges[current] {
-        let mut next_steps = steps.clone();
-        next_steps.push(edge.base);
-        let next_has_virtual_edge = has_virtual_edge || edge.is_virtual;
-
-        if edge.base == target {
-            paths.push(InheritancePath {
-                steps: next_steps,
-                has_virtual_edge: next_has_virtual_edge,
-            });
-            continue;
-        }
-
-        collect_inheritance_paths(
-            base_edges,
-            edge.base,
-            target,
-            next_steps,
-            next_has_virtual_edge,
-            paths,
-        );
-    }
 }
 
 fn build_cast_target_ids(

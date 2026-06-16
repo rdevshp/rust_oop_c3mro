@@ -16,6 +16,48 @@ pub trait OopObject {
     type Class: OopClass;
 }
 
+pub trait OopBaseVia<Via, Target> {
+    #[doc(hidden)]
+    fn __oop_as_base_via(&self) -> &Target;
+
+    #[doc(hidden)]
+    fn __oop_as_base_via_mut(&mut self) -> &mut Target;
+}
+
+pub trait OopBaseAccess {
+    fn as_base_via<Via, Target>(&self) -> &Target
+    where
+        Self: OopBaseVia<Via, Target>,
+    {
+        <Self as OopBaseVia<Via, Target>>::__oop_as_base_via(self)
+    }
+
+    fn as_base_via_mut<Via, Target>(&mut self) -> &mut Target
+    where
+        Self: OopBaseVia<Via, Target>,
+    {
+        <Self as OopBaseVia<Via, Target>>::__oop_as_base_via_mut(self)
+    }
+}
+
+impl<T: ?Sized> OopBaseAccess for T {}
+
+pub trait OopBoxBaseVia<Via, Target: ?Sized> {
+    #[doc(hidden)]
+    fn __oop_into_base_via(self: Box<Self>) -> Box<Target>;
+}
+
+pub trait OopBoxBaseAccess {
+    fn into_base_via<Via, Target: ?Sized>(self: Box<Self>) -> Box<Target>
+    where
+        Self: OopBoxBaseVia<Via, Target>,
+    {
+        <Self as OopBoxBaseVia<Via, Target>>::__oop_into_base_via(self)
+    }
+}
+
+impl<T: ?Sized> OopBoxBaseAccess for T {}
+
 pub trait OopDowncastRef {
     fn downcast_ref<Target>(&self) -> Option<&Target>
     where
@@ -148,9 +190,9 @@ impl<T> Drop for VirtualBaseSlot<T> {
 
 pub mod prelude {
     pub use crate::{
-        oop_class, super_call, MethodEntry, MethodFn, MethodTable, OopBoxDowncast,
-        OopBoxDowncastTarget, OopClass, OopDowncastMut, OopDowncastMutTarget, OopDowncastRef,
-        OopDowncastRefTarget, OopObject,
+        oop_class, super_call, MethodEntry, MethodFn, MethodTable, OopBaseAccess, OopBaseVia,
+        OopBoxBaseAccess, OopBoxBaseVia, OopBoxDowncast, OopBoxDowncastTarget, OopClass,
+        OopDowncastMut, OopDowncastMutTarget, OopDowncastRef, OopDowncastRefTarget, OopObject,
     };
 }
 

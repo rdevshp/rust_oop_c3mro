@@ -33,15 +33,15 @@ oop_class! {
 fn main() {
     let mut diamond = Diamond::new();
 
-    assert_eq!(diamond.as_root().value(), 3);
+    assert_eq!(diamond.as_base_via::<Left, Root>().value(), 3);
     assert_eq!(diamond.as_left().as_root().value(), 3);
     assert_eq!(diamond.as_right().as_root().value(), 2);
     assert_ne!(
-        diamond.as_left().as_root() as *const Root,
-        diamond.as_right().as_root() as *const Root,
+        diamond.as_base_via::<Left, Root>() as *const Root,
+        diamond.as_base_via::<Right, Root>() as *const Root,
     );
 
-    diamond.as_right_mut().as_root_mut().set_value(4);
-    assert_eq!(diamond.as_left().as_root().value(), 3);
-    assert_eq!(diamond.as_right().as_root().value(), 4);
+    diamond.as_base_via_mut::<Right, Root>().set_value(4);
+    assert_eq!(diamond.as_base_via::<Left, Root>().value(), 3);
+    assert_eq!(diamond.as_base_via::<Right, Root>().value(), 4);
 }

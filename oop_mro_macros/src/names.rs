@@ -66,6 +66,14 @@ pub(crate) fn vtable_cast_mut_field_ident() -> Ident {
     format_ident!("__oop_cast_mut")
 }
 
+pub(crate) fn vtable_downcast_ref_field_ident() -> Ident {
+    format_ident!("__oop_downcast_ref")
+}
+
+pub(crate) fn vtable_downcast_mut_field_ident() -> Ident {
+    format_ident!("__oop_downcast_mut")
+}
+
 pub(crate) fn vtable_cast_ref_function_ident(
     graph: &Graph,
     class_index: usize,
@@ -84,6 +92,26 @@ pub(crate) fn vtable_cast_mut_function_ident(
     let class_name = to_snake(&graph.names[class_index]);
     let slot_name = to_snake(&vtable_slot_name(graph, slot));
     format_ident!("__oop_cast_mut_{}_as_{}", class_name, slot_name)
+}
+
+pub(crate) fn vtable_downcast_ref_function_ident(
+    graph: &Graph,
+    class_index: usize,
+    slot: &VtableSlot,
+) -> Ident {
+    let class_name = to_snake(&graph.names[class_index]);
+    let slot_name = to_snake(&vtable_slot_name(graph, slot));
+    format_ident!("__oop_downcast_ref_{}_as_{}", class_name, slot_name)
+}
+
+pub(crate) fn vtable_downcast_mut_function_ident(
+    graph: &Graph,
+    class_index: usize,
+    slot: &VtableSlot,
+) -> Ident {
+    let class_name = to_snake(&graph.names[class_index]);
+    let slot_name = to_snake(&vtable_slot_name(graph, slot));
+    format_ident!("__oop_downcast_mut_{}_as_{}", class_name, slot_name)
 }
 
 pub(crate) fn vtable_function_ident(

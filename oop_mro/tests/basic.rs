@@ -409,8 +409,158 @@ oop_class! {
         constructor(): MixedRoot(2) {}
     }
 
+    class MixedOther: MixedRoot {
+        constructor(): MixedRoot(99) {}
+    }
+
     class MixedDiamond: MixedVirtualLeft, MixedConcreteRight {
         constructor(): MixedRoot(10), MixedVirtualLeft(), MixedConcreteRight() {}
+    }
+
+    class AmbRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn value(&self) -> usize {
+            self.value
+        }
+
+        fn set_value(&mut self, value: usize) {
+            self.value = value;
+        }
+    }
+
+    class AmbChild: AmbRoot {
+        constructor(): AmbRoot(2) {}
+    }
+
+    class AmbMixed: virtual AmbRoot, AmbChild {
+        constructor(): AmbRoot(5), AmbChild() {}
+    }
+
+    class PathRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn value(&self) -> usize {
+            self.value
+        }
+    }
+
+    class PathLeft: PathRoot {
+        constructor(): PathRoot(11) {}
+    }
+
+    class PathRight: PathRoot {
+        constructor(): PathRoot(17) {}
+    }
+
+    class PathBranch: PathLeft, PathRight {
+        constructor(): PathLeft(), PathRight() {}
+    }
+
+    class PathDiamond: PathBranch {
+        constructor(): PathBranch() {}
+    }
+
+    class DowncastPathRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        virtual fn value(&self) -> usize {
+            self.value
+        }
+    }
+
+    class DowncastPathLeft: DowncastPathRoot {
+        constructor(): DowncastPathRoot(31) {}
+    }
+
+    class DowncastPathRight: DowncastPathRoot {
+        constructor(): DowncastPathRoot(47) {}
+    }
+
+    class DowncastPathDiamond: DowncastPathLeft, DowncastPathRight {
+        constructor(): DowncastPathLeft(), DowncastPathRight() {}
+    }
+
+    class OwnedViaDynRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        fn value(&self) -> usize {
+            self.value
+        }
+    }
+
+    class OwnedViaDynLeft: OwnedViaDynRoot {
+        constructor(value: usize): OwnedViaDynRoot(value) {}
+    }
+
+    class OwnedViaDynRight: OwnedViaDynRoot {
+        constructor(value: usize): OwnedViaDynRoot(value) {}
+    }
+
+    class OwnedViaDynBranch: OwnedViaDynLeft, OwnedViaDynRight {
+        constructor(left: usize, right: usize): OwnedViaDynLeft(left), OwnedViaDynRight(right) {}
+    }
+
+    class OwnedViaDynTopLeft: OwnedViaDynBranch {
+        constructor(): OwnedViaDynBranch(10, 11) {}
+    }
+
+    class OwnedViaDynTopRight: OwnedViaDynBranch {
+        constructor(): OwnedViaDynBranch(20, 21) {}
+    }
+
+    class OwnedViaDynDiamond: OwnedViaDynTopLeft, OwnedViaDynTopRight {
+        constructor(): OwnedViaDynTopLeft(), OwnedViaDynTopRight() {}
+    }
+
+    class GenericViaRoot {
+        label: &'static str,
+
+        constructor(label: &'static str) {
+            self.label = label;
+        }
+
+        fn label(&self) -> &'static str {
+            self.label
+        }
+    }
+
+    class GenericViaBase<T>: GenericViaRoot {
+        marker: core::marker::PhantomData<T> = core::marker::PhantomData,
+
+        constructor(label: &'static str): GenericViaRoot(label) {}
+
+        fn type_name(&self) -> &'static str {
+            core::any::type_name::<T>()
+        }
+    }
+
+    class GenericViaLeft: GenericViaBase<i32> {
+        constructor(): GenericViaBase<i32>("left") {}
+    }
+
+    class GenericViaRight: GenericViaBase<String> {
+        constructor(): GenericViaBase<String>("right") {}
+    }
+
+    class GenericViaDiamond: GenericViaLeft, GenericViaRight {
+        constructor(): GenericViaLeft(), GenericViaRight() {}
     }
 
     class SpecializedSlot<T> {
@@ -519,13 +669,11 @@ fn base_references_dispatch_inherited_and_mutable_virtual_methods() {
 }
 
 #[test]
-fn owned_base_trait_objects_upcast_through_inheritance() {
-    let dog: Box<dyn AsDog> = Box::new(Dog::default());
-    let animal: Box<dyn AsAnimal> = dog;
+fn owned_base_trait_objects_can_target_inherited_interfaces() {
+    let animal: Box<dyn AsAnimal> = Box::new(Dog::default());
     assert_eq!(animal.as_animal().speak(), "woof -> generic");
 
-    let dog: Box<dyn AsDog> = Box::new(Dog::default());
-    let walker: Box<dyn AsWalker> = dog;
+    let walker: Box<dyn AsWalker> = Box::new(Dog::default());
     assert_eq!(walker.as_walker().walk(), "walking");
 }
 
@@ -578,10 +726,10 @@ fn borrowed_base_references_downcast_through_vtable_metadata() {
     assert_eq!(kangaroo_ref.walk(), "walking");
 
     let walker = kangaroo.as_walker();
-    let mammal = walker
-        .downcast_ref::<Mammal>()
-        .expect("kangaroo Walker view should cross-cast to Mammal");
-    assert_eq!(mammal.speak(), "chuff");
+    let kangaroo_ref = walker
+        .downcast_ref::<Kangaroo>()
+        .expect("kangaroo Walker view should downcast to Kangaroo");
+    assert_eq!(kangaroo_ref.speak(), "chuff");
 
     let cat = Cat::default();
     assert!(cat.as_animal().downcast_ref::<Mammal>().is_none());
@@ -599,6 +747,79 @@ fn mutable_base_references_downcast_through_vtable_metadata() {
 }
 
 #[test]
+fn borrowed_downcast_follows_the_receiver_inheritance_path() {
+    let diamond = DowncastPathDiamond::new();
+    let left_root = diamond.as_base_via::<DowncastPathLeft, DowncastPathRoot>();
+    let right_root = diamond.as_base_via::<DowncastPathRight, DowncastPathRoot>();
+
+    assert_eq!(
+        left_root
+            .downcast_ref::<DowncastPathLeft>()
+            .expect("left root should downcast to left")
+            .as_downcast_path_root()
+            .value(),
+        31
+    );
+    assert!(left_root.downcast_ref::<DowncastPathRight>().is_none());
+    assert_eq!(
+        right_root
+            .downcast_ref::<DowncastPathRight>()
+            .expect("right root should downcast to right")
+            .as_downcast_path_root()
+            .value(),
+        47
+    );
+    assert!(right_root.downcast_ref::<DowncastPathLeft>().is_none());
+
+    assert!(core::ptr::eq(
+        left_root
+            .downcast_ref::<DowncastPathDiamond>()
+            .expect("left root should downcast to complete diamond"),
+        &diamond,
+    ));
+    assert!(core::ptr::eq(
+        right_root
+            .downcast_ref::<DowncastPathDiamond>()
+            .expect("right root should downcast to complete diamond"),
+        &diamond,
+    ));
+}
+
+#[test]
+fn owned_downcast_follows_the_receiver_inheritance_path() {
+    let diamond: Box<DowncastPathDiamond> = Box::new(DowncastPathDiamond::new());
+    let root: Box<dyn AsDowncastPathRoot> =
+        diamond.into_base_via::<DowncastPathLeft, dyn AsDowncastPathRoot>();
+    let left = match root.downcast::<dyn AsDowncastPathLeft>() {
+        Ok(left) => left,
+        Err(_) => panic!("left root should downcast to left"),
+    };
+    assert_eq!(
+        left.as_downcast_path_left().as_downcast_path_root().value(),
+        31
+    );
+
+    let diamond: Box<DowncastPathDiamond> = Box::new(DowncastPathDiamond::new());
+    let root: Box<dyn AsDowncastPathRoot> =
+        diamond.into_base_via::<DowncastPathLeft, dyn AsDowncastPathRoot>();
+    let root = match root.downcast::<dyn AsDowncastPathRight>() {
+        Ok(_) => panic!("left root should not downcast to right"),
+        Err(root) => root,
+    };
+    let diamond = match root.downcast::<dyn AsDowncastPathDiamond>() {
+        Ok(diamond) => diamond,
+        Err(_) => panic!("left root should downcast to complete diamond"),
+    };
+    assert_eq!(
+        diamond
+            .as_downcast_path_diamond()
+            .as_base_via::<DowncastPathRight, DowncastPathRoot>()
+            .value(),
+        47
+    );
+}
+
+#[test]
 fn exposes_c3_metadata_and_uses_c3_for_forwarding() {
     let object = C::default();
 
@@ -606,6 +827,10 @@ fn exposes_c3_metadata_and_uses_c3_for_forwarding() {
     assert_eq!(object.name(), "A");
     assert_eq!(object.label(), "B");
     assert_eq!(object.root(), "object");
+    assert_ne!(
+        object.as_base_via::<A, Object>() as *const Object,
+        object.as_base_via::<B, Object>() as *const Object,
+    );
     assert_eq!(object.as_b().as_object().name(), "A");
 }
 
@@ -824,35 +1049,182 @@ fn mixed_virtual_and_non_virtual_paths_create_distinct_base_subobjects() {
     let mut diamond = MixedDiamond::new();
 
     assert!(core::ptr::eq(
-        diamond.as_mixed_root(),
+        diamond.as_base_via::<MixedVirtualLeft, MixedRoot>(),
         diamond.as_mixed_virtual_left().as_mixed_root(),
     ));
     assert_ne!(
-        diamond.as_mixed_virtual_left().as_mixed_root() as *const MixedRoot,
-        diamond.as_mixed_concrete_right().as_mixed_root() as *const MixedRoot,
+        diamond.as_base_via::<MixedVirtualLeft, MixedRoot>() as *const MixedRoot,
+        diamond.as_base_via::<MixedConcreteRight, MixedRoot>() as *const MixedRoot,
     );
-    assert_eq!(diamond.as_mixed_root().value(), 10);
-    assert_eq!(diamond.as_mixed_concrete_right().as_mixed_root().value(), 2);
+    assert_eq!(
+        diamond.as_base_via::<MixedVirtualLeft, MixedRoot>().value(),
+        10
+    );
+    assert_eq!(
+        diamond
+            .as_base_via::<MixedConcreteRight, MixedRoot>()
+            .value(),
+        2
+    );
 
     diamond
-        .as_mixed_concrete_right_mut()
-        .as_mixed_root_mut()
+        .as_base_via_mut::<MixedConcreteRight, MixedRoot>()
         .set_value(22);
-    assert_eq!(diamond.as_mixed_root().value(), 10);
     assert_eq!(
-        diamond.as_mixed_concrete_right().as_mixed_root().value(),
+        diamond.as_base_via::<MixedVirtualLeft, MixedRoot>().value(),
+        10
+    );
+    assert_eq!(
+        diamond
+            .as_base_via::<MixedConcreteRight, MixedRoot>()
+            .value(),
         22
     );
 
     diamond
-        .as_mixed_virtual_left_mut()
-        .as_mixed_root_mut()
+        .as_base_via_mut::<MixedVirtualLeft, MixedRoot>()
         .set_value(33);
-    assert_eq!(diamond.as_mixed_root().value(), 33);
     assert_eq!(
-        diamond.as_mixed_concrete_right().as_mixed_root().value(),
+        diamond.as_base_via::<MixedVirtualLeft, MixedRoot>().value(),
+        33
+    );
+    assert_eq!(
+        diamond
+            .as_base_via::<MixedConcreteRight, MixedRoot>()
+            .value(),
         22
     );
+
+    let diamond_trait: &dyn AsMixedDiamond = &diamond;
+    assert_eq!(
+        diamond_trait
+            .as_base_via::<MixedVirtualLeft, MixedRoot>()
+            .value(),
+        33,
+    );
+}
+
+#[test]
+fn direct_virtual_and_indirect_non_virtual_paths_are_explicit() {
+    let mut mixed = AmbMixed::new();
+
+    assert_ne!(
+        mixed.as_base_via::<AmbRoot, AmbRoot>() as *const AmbRoot,
+        mixed.as_base_via::<AmbChild, AmbRoot>() as *const AmbRoot,
+    );
+    assert_eq!(mixed.as_base_via::<AmbRoot, AmbRoot>().value(), 5);
+    assert_eq!(mixed.as_base_via::<AmbChild, AmbRoot>().value(), 2);
+
+    mixed.as_base_via_mut::<AmbRoot, AmbRoot>().set_value(8);
+    mixed.as_base_via_mut::<AmbChild, AmbRoot>().set_value(13);
+
+    assert_eq!(mixed.as_base_via::<AmbRoot, AmbRoot>().value(), 8);
+    assert_eq!(mixed.as_base_via::<AmbChild, AmbRoot>().value(), 13);
+}
+
+#[test]
+fn via_type_selects_specific_subobject() {
+    let diamond = PathDiamond::new();
+
+    assert_ne!(
+        diamond.as_base_via::<PathLeft, PathRoot>() as *const PathRoot,
+        diamond.as_base_via::<PathRight, PathRoot>() as *const PathRoot,
+    );
+    assert_eq!(diamond.as_base_via::<PathLeft, PathRoot>().value(), 11);
+    assert_eq!(diamond.as_base_via::<PathRight, PathRoot>().value(), 17);
+
+    let branch_trait: &dyn AsPathBranch = diamond.as_path_branch();
+    assert_eq!(branch_trait.as_base_via::<PathLeft, PathRoot>().value(), 11,);
+}
+
+#[test]
+fn via_type_uses_actual_generic_specialization() {
+    let diamond = GenericViaDiamond::new();
+
+    let left_root = diamond.as_base_via::<GenericViaBase<i32>, GenericViaRoot>();
+    let right_root = diamond.as_base_via::<GenericViaBase<String>, GenericViaRoot>();
+
+    assert_ne!(
+        left_root as *const GenericViaRoot,
+        right_root as *const GenericViaRoot,
+    );
+    assert_eq!(left_root.label(), "left");
+    assert_eq!(right_root.label(), "right");
+    assert_eq!(
+        diamond
+            .as_base_via::<GenericViaBase<i32>, GenericViaRoot>()
+            .label(),
+        "left",
+    );
+}
+
+#[test]
+fn owned_via_upcasts_preserve_selected_subobject() {
+    let concrete_root =
+        Box::new(MixedDiamond::new()).into_base_via::<MixedVirtualLeft, dyn AsMixedRoot>();
+    assert_eq!(concrete_root.as_mixed_root().value(), 10);
+
+    let boxed: Box<dyn AsMixedDiamond> = Box::new(MixedDiamond::new());
+    let root = boxed.into_base_via::<MixedConcreteRight, dyn AsMixedRoot>();
+
+    assert_eq!(root.as_mixed_root().value(), 2);
+
+    let diamond = match root.downcast::<dyn AsMixedDiamond>() {
+        Ok(diamond) => diamond,
+        Err(_) => panic!("path-owned MixedRoot should downcast back to MixedDiamond"),
+    };
+    assert_eq!(
+        diamond
+            .as_mixed_diamond()
+            .as_base_via::<MixedConcreteRight, MixedRoot>()
+            .value(),
+        2,
+    );
+}
+
+#[test]
+fn owned_via_upcasts_support_tuple_paths() {
+    let boxed: Box<dyn AsPathDiamond> = Box::new(PathDiamond::new());
+    let root = boxed.into_base_via::<(PathBranch, PathRight), dyn AsPathRoot>();
+
+    assert_eq!(root.as_path_root().value(), 17);
+}
+
+#[test]
+fn owned_via_upcast_from_path_owned_dyn_source_preserves_source_subobject() {
+    let diamond: Box<OwnedViaDynDiamond> = Box::new(OwnedViaDynDiamond::new());
+    let branch: Box<dyn AsOwnedViaDynBranch> =
+        diamond.into_base_via::<OwnedViaDynTopRight, dyn AsOwnedViaDynBranch>();
+    let root = branch.into_base_via::<OwnedViaDynLeft, dyn AsOwnedViaDynRoot>();
+
+    assert_eq!(root.as_owned_via_dyn_root().value(), 20);
+
+    let diamond: Box<OwnedViaDynDiamond> = Box::new(OwnedViaDynDiamond::new());
+    let branch: Box<dyn AsOwnedViaDynBranch> =
+        diamond.into_base_via::<OwnedViaDynTopLeft, dyn AsOwnedViaDynBranch>();
+    let root = branch.into_base_via::<OwnedViaDynRight, dyn AsOwnedViaDynRoot>();
+
+    assert_eq!(root.as_owned_via_dyn_root().value(), 11);
+}
+
+#[test]
+fn owned_via_upcasts_use_actual_generic_specialization() {
+    let boxed: Box<dyn AsGenericViaDiamond> = Box::new(GenericViaDiamond::new());
+    let root = boxed.into_base_via::<GenericViaBase<String>, dyn AsGenericViaRoot>();
+
+    assert_eq!(root.as_generic_via_root().label(), "right");
+}
+
+#[test]
+fn failed_owned_via_downcast_preserves_original_box() {
+    let boxed: Box<dyn AsMixedDiamond> = Box::new(MixedDiamond::new());
+    let root = boxed.into_base_via::<MixedVirtualLeft, dyn AsMixedRoot>();
+    let root = match root.downcast::<dyn AsMixedOther>() {
+        Ok(_) => panic!("MixedDiamond should not downcast to MixedOther"),
+        Err(root) => root,
+    };
+
+    assert_eq!(root.as_mixed_root().value(), 10);
 }
 
 #[test]
@@ -871,4 +1243,23 @@ fn virtual_generic_specializations_are_distinct_bases() {
     assert_eq!(right_slot.label(), "string");
     assert_eq!(left_slot.type_name(), "i32");
     assert_eq!(right_slot.type_name(), "alloc::string::String");
+
+    let left = left_slot
+        .downcast_ref::<SpecializedLeft>()
+        .expect("i32 slot should downcast to SpecializedLeft");
+    let right = right_slot
+        .downcast_ref::<SpecializedRight>()
+        .expect("String slot should downcast to SpecializedRight");
+    assert_eq!(left.as_specialized_slot().label(), "int");
+    assert_eq!(right.as_specialized_slot().label(), "string");
+
+    let slot: Box<dyn AsSpecializedSlot<String>> = Box::new(SpecializedDiamond::new());
+    let right = match slot.downcast::<dyn AsSpecializedRight>() {
+        Ok(right) => right,
+        Err(_) => panic!("String slot should owned-downcast to SpecializedRight"),
+    };
+    assert_eq!(
+        right.as_specialized_right().as_specialized_slot().label(),
+        "string"
+    );
 }

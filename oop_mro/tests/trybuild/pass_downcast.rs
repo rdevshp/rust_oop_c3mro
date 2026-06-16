@@ -103,7 +103,7 @@ fn main() {
 
     let kangaroo = Kangaroo::default();
     assert_eq!(kangaroo.as_animal().downcast_ref::<Mammal>().unwrap().speak(), "chuff");
-    assert_eq!(kangaroo.as_walker().downcast_ref::<Mammal>().unwrap().speak(), "chuff");
+    assert_eq!(kangaroo.as_walker().downcast_ref::<Kangaroo>().unwrap().speak(), "chuff");
 
     let mut counter = LoudCounter::default();
     assert_eq!(

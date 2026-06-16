@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens};
@@ -14,9 +14,12 @@ use crate::generics::{
 use crate::model::{Graph, MethodInfo, ReceiverKind, VtableSlot};
 use crate::names::{
     base_cast_method_ident, base_field_ident, default_base_trait_ident, private_module_ident,
-    static_field_ident, virtual_base_field_ident, virtual_impl_ident, vtable_cast_mut_field_ident,
-    vtable_cast_mut_function_ident, vtable_cast_ref_field_ident, vtable_cast_ref_function_ident,
-    vtable_factory_ident, vtable_field_ident, vtable_function_ident, vtable_ident,
+    static_field_ident, to_snake, virtual_base_field_ident, virtual_impl_ident,
+    vtable_cast_mut_field_ident, vtable_cast_mut_function_ident, vtable_cast_ref_field_ident,
+    vtable_cast_ref_function_ident, vtable_downcast_mut_field_ident,
+    vtable_downcast_mut_function_ident, vtable_downcast_ref_field_ident,
+    vtable_downcast_ref_function_ident, vtable_factory_ident, vtable_field_ident,
+    vtable_function_ident, vtable_ident,
 };
 use crate::types::{
     ancestor_type, ancestor_type_for_path, async_dispatch_lifetime, async_output_type,
@@ -83,8 +86,10 @@ fn generate_compile_warnings(graph: &Graph) -> TokenStream2 {
     graph
         .warnings
         .iter()
-        .map(|warning| {
-            let message = syn::LitStr::new(&warning.message, Span::call_site());
+        .map(|warning| warning.message.clone())
+        .chain(ambiguous_base_warnings(graph))
+        .map(|message| {
+            let message = syn::LitStr::new(&message, Span::call_site());
             quote! {
                 const _: () = {
                     #[deprecated(note = #message)]
@@ -137,41 +142,394 @@ struct AncestorView {
     path: Vec<usize>,
 }
 
+#[derive(Clone)]
+struct BaseViaView {
+    class_index: usize,
+    actual: Type,
+    path: Vec<usize>,
+    via: TokenStream2,
+}
+
 fn ancestor_views(graph: &Graph, start: usize) -> Vec<AncestorView> {
+    subobject_groups(graph, start)
+        .into_iter()
+        .filter_map(|group| {
+            if group.views.len() == 1 {
+                group.views.into_iter().next()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn base_via_views(graph: &Graph, start: usize) -> Vec<BaseViaView> {
+    let mut via_views = Vec::new();
+
+    for group in subobject_groups(graph, start) {
+        if group.views.len() <= 1 {
+            continue;
+        }
+
+        let mut candidate_views: HashMap<String, HashSet<usize>> = HashMap::new();
+        let mut candidates = Vec::new();
+
+        for (view_index, view) in group.views.iter().enumerate() {
+            let mut seen_for_view = HashSet::new();
+            for candidate in via_candidates_for_path(graph, start, &view.path) {
+                if seen_for_view.insert(candidate.key.clone()) {
+                    candidate_views
+                        .entry(candidate.key.clone())
+                        .or_default()
+                        .insert(view_index);
+                    candidates.push((candidate, view_index));
+                }
+            }
+        }
+
+        let mut emitted = HashSet::new();
+        for (candidate, view_index) in candidates {
+            if !emitted.insert(candidate.key.clone()) {
+                continue;
+            }
+            if candidate_views
+                .get(&candidate.key)
+                .map(HashSet::len)
+                .unwrap_or_default()
+                != 1
+            {
+                continue;
+            }
+
+            let view = &group.views[view_index];
+            via_views.push(BaseViaView {
+                class_index: view.class_index,
+                actual: view.actual.clone(),
+                path: view.path.clone(),
+                via: candidate.via,
+            });
+        }
+    }
+
+    via_views
+}
+
+struct ViaCandidate {
+    key: String,
+    via: TokenStream2,
+}
+
+fn via_candidates_for_path(graph: &Graph, start: usize, path: &[usize]) -> Vec<ViaCandidate> {
+    if path.is_empty() {
+        return Vec::new();
+    }
+
+    let via_len = path.len().saturating_sub(1);
+    if via_len == 0 {
+        let via_ty = ancestor_type_for_path(graph, start, path);
+        return vec![ViaCandidate {
+            key: type_key(&via_ty),
+            via: quote! { #via_ty },
+        }];
+    }
+
+    let mut candidates = Vec::new();
+
+    for index in 0..via_len {
+        let via_ty = ancestor_type_for_path(graph, start, &path[..=index]);
+        candidates.push(ViaCandidate {
+            key: type_key(&via_ty),
+            via: quote! { #via_ty },
+        });
+    }
+
+    for len in 2..=via_len {
+        let via_types = (0..len)
+            .map(|index| ancestor_type_for_path(graph, start, &path[..=index]))
+            .collect::<Vec<_>>();
+        let key = format!(
+            "({})",
+            via_types.iter().map(type_key).collect::<Vec<_>>().join(",")
+        );
+        candidates.push(ViaCandidate {
+            key,
+            via: quote! { (#(#via_types),*) },
+        });
+    }
+
+    candidates
+}
+
+struct SubobjectGroup {
+    views: Vec<AncestorView>,
+}
+
+fn subobject_groups(graph: &Graph, start: usize) -> Vec<SubobjectGroup> {
+    let mut groups: Vec<(String, SubobjectGroup)> = Vec::new();
+
+    for view in subobject_views(graph, start) {
+        let key = cast_target_key(view.class_index, &view.actual);
+        if let Some((_, group)) = groups.iter_mut().find(|(group_key, _)| group_key == &key) {
+            group.views.push(view);
+        } else {
+            groups.push((key, SubobjectGroup { views: vec![view] }));
+        }
+    }
+
+    groups.into_iter().map(|(_, group)| group).collect()
+}
+
+fn subobject_views(graph: &Graph, start: usize) -> Vec<AncestorView> {
     let mut views = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen_storage = HashSet::new();
     let own_actual = class_type(&graph.classes[start]);
-    seen.insert(cast_target_key(start, &own_actual));
+    let own_storage_key = format!("self:{}:{}", start, type_key(&own_actual));
+    seen_storage.insert(own_storage_key);
     views.push(AncestorView {
         class_index: start,
         actual: own_actual,
         path: Vec::new(),
     });
-    collect_ancestor_views(graph, start, start, Vec::new(), &mut seen, &mut views);
+    collect_subobject_views(
+        graph,
+        start,
+        start,
+        Vec::new(),
+        &mut seen_storage,
+        &mut views,
+    );
     views
 }
 
-fn collect_ancestor_views(
+fn collect_subobject_views(
     graph: &Graph,
     root: usize,
     current: usize,
     path: Vec<usize>,
-    seen: &mut HashSet<String>,
+    seen_storage: &mut HashSet<String>,
     views: &mut Vec<AncestorView>,
 ) {
     for edge in &graph.base_edges[current] {
         let mut next_path = path.clone();
         next_path.push(edge.base);
         let actual = ancestor_type_for_path(graph, root, &next_path);
-        if seen.insert(cast_target_key(edge.base, &actual)) {
+        let storage_key = storage_key_for_path(graph, root, &next_path);
+        if seen_storage.insert(storage_key.clone()) {
             views.push(AncestorView {
                 class_index: edge.base,
                 actual,
                 path: next_path.clone(),
             });
         }
-        collect_ancestor_views(graph, root, edge.base, next_path, seen, views);
+        collect_subobject_views(graph, root, edge.base, next_path, seen_storage, views);
     }
+}
+
+fn storage_key_for_path(graph: &Graph, complete: usize, path: &[usize]) -> String {
+    storage_parts_for_path(graph, complete, path).join("/")
+}
+
+fn storage_parts_for_path(graph: &Graph, complete: usize, path: &[usize]) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = complete;
+    let mut traversed = Vec::new();
+
+    for &next in path {
+        traversed.push(next);
+        let actual = ancestor_type_for_path(graph, complete, &traversed);
+        if edge_is_virtual(graph, current, next) {
+            let owner_path =
+                canonical_virtual_owner_path(graph, complete, next, &actual).unwrap_or_default();
+            parts = storage_parts_for_path(graph, complete, &owner_path);
+            parts.push(format!("v:{}:{}", next, type_key(&actual)));
+        } else {
+            parts.push(format!("n:{}:{}", next, type_key(&actual)));
+        }
+        current = next;
+    }
+
+    parts
+}
+
+fn is_unambiguous_ancestor(graph: &Graph, start: usize, target: usize, actual: &Type) -> bool {
+    ancestor_views(graph, start)
+        .into_iter()
+        .any(|view| view.class_index == target && type_key(&view.actual) == type_key(actual))
+}
+
+fn subobject_id(graph: &Graph, complete: usize, path: &[usize]) -> usize {
+    let target_key = subobject_id_key(graph, complete, path);
+    let mut keys = Vec::new();
+    let mut seen = HashSet::new();
+
+    for complete in 0..graph.classes.len() {
+        for view in subobject_views(graph, complete) {
+            let key = subobject_id_key(graph, complete, &view.path);
+            if seen.insert(key.clone()) {
+                keys.push(key);
+            }
+        }
+    }
+
+    keys.sort();
+    keys.iter()
+        .position(|key| key == &target_key)
+        .expect("subobject path must have an id")
+}
+
+fn subobject_id_key(graph: &Graph, complete: usize, path: &[usize]) -> String {
+    format!(
+        "{}:{}",
+        complete,
+        storage_key_for_path(graph, complete, path)
+    )
+}
+
+fn target_path_contains_source_path(
+    graph: &Graph,
+    complete: usize,
+    target_index: usize,
+    target_path: &[usize],
+    source_path: &[usize],
+) -> bool {
+    let source_key = storage_key_for_path(graph, complete, source_path);
+
+    subobject_views(graph, target_index)
+        .into_iter()
+        .any(|contained| {
+            let mut contained_path = target_path.to_vec();
+            contained_path.extend(contained.path);
+            storage_key_for_path(graph, complete, &contained_path) == source_key
+        })
+}
+
+fn downcast_target_views_for_source_path(
+    graph: &Graph,
+    complete: usize,
+    source_path: &[usize],
+) -> Vec<AncestorView> {
+    let mut groups: Vec<(String, Vec<AncestorView>)> = Vec::new();
+
+    for view in subobject_views(graph, complete) {
+        if !target_path_contains_source_path(
+            graph,
+            complete,
+            view.class_index,
+            &view.path,
+            source_path,
+        ) {
+            continue;
+        }
+
+        let key = cast_target_key(view.class_index, &view.actual);
+        if let Some((_, group)) = groups.iter_mut().find(|(group_key, _)| group_key == &key) {
+            group.push(view);
+        } else {
+            groups.push((key, vec![view]));
+        }
+    }
+
+    groups
+        .into_iter()
+        .filter_map(
+            |(_, mut views)| {
+                if views.len() == 1 {
+                    views.pop()
+                } else {
+                    None
+                }
+            },
+        )
+        .collect()
+}
+
+fn base_supertrait_is_unambiguous_for_all_impls(
+    graph: &Graph,
+    trait_index: usize,
+    base_index: usize,
+) -> bool {
+    for complete in 0..graph.classes.len() {
+        for view in ancestor_views(graph, complete)
+            .into_iter()
+            .filter(|view| view.class_index == trait_index)
+        {
+            let mut base_path = view.path;
+            base_path.push(base_index);
+            let actual = ancestor_type_for_path(graph, complete, &base_path);
+            if !is_unambiguous_ancestor(graph, complete, base_index, &actual) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn vtable_cast_views(graph: &Graph, complete: usize, slot: &VtableSlot) -> Vec<AncestorView> {
+    let mut views = Vec::new();
+    let mut seen = HashSet::new();
+
+    for view in ancestor_views(graph, slot.ancestor) {
+        let mut path = slot.path.clone();
+        path.extend(view.path);
+        let actual = ancestor_type_for_path(graph, complete, &path);
+        let key = cast_target_key(view.class_index, &actual);
+        if seen.insert(key) {
+            views.push(AncestorView {
+                class_index: view.class_index,
+                actual,
+                path,
+            });
+        }
+    }
+
+    for view in ancestor_views(graph, complete) {
+        let key = cast_target_key(view.class_index, &view.actual);
+        if seen.insert(key) {
+            views.push(view);
+        }
+    }
+
+    views
+}
+
+fn ambiguous_base_warnings(graph: &Graph) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    for start in 0..graph.classes.len() {
+        let via_views = base_via_views(graph, start);
+        for group in subobject_groups(graph, start) {
+            if group.views.len() <= 1 {
+                continue;
+            }
+
+            let target = group.views[0].class_index;
+            let target_actual_key = type_key(&group.views[0].actual);
+            let suggestions = via_views
+                .iter()
+                .filter(|view| {
+                    view.class_index == target && type_key(&view.actual) == target_actual_key
+                })
+                .map(|view| {
+                    format!(
+                        "as_base_via::<{}, {}>()",
+                        view.via.to_token_stream(),
+                        view.actual.to_token_stream()
+                    )
+                })
+                .collect::<Vec<_>>();
+            let suggestion_list = suggestions.join("`, `");
+            warnings.push(format!(
+                "ambiguous base `{}` in class `{}`: normal `as_{}` accessors are omitted; use type-directed via accessors such as `{}`",
+                graph.names[target],
+                graph.names[start],
+                to_snake(&graph.names[target]),
+                suggestion_list
+            ));
+        }
+    }
+
+    warnings
 }
 
 fn collect_vtable_slots(

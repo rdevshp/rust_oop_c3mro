@@ -1,0 +1,69 @@
+warning: use of deprecated constant `_::__OOP_MRO_WARNING`: ambiguous base `Root` in class `Branch`: normal `as_root` accessors are omitted; use type-directed via accessors such as `as_base_via::<Left, Root>()`, `as_base_via::<Right, Root>()`
+ --> tests/trybuild/fail_ambiguous_via_type.rs:3:1
+  |
+3 | / oop_class! {
+4 | |     class Root {}
+5 | |     class Left: Root {}
+6 | |     class Right: Root {}
+7 | |     class Branch: Left, Right {}
+8 | |     class Diamond: Branch {}
+9 | | }
+  | |_^
+  |
+  = note: `#[warn(deprecated)]` on by default
+  = note: this warning originates in the macro `oop_class` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: use of deprecated constant `_::__OOP_MRO_WARNING`: ambiguous base `Root` in class `Diamond`: normal `as_root` accessors are omitted; use type-directed via accessors such as `as_base_via::<Left, Root>()`, `as_base_via::<(Branch, Left), Root>()`, `as_base_via::<Right, Root>()`, `as_base_via::<(Branch, Right), Root>()`
+ --> tests/trybuild/fail_ambiguous_via_type.rs:3:1
+  |
+3 | / oop_class! {
+4 | |     class Root {}
+5 | |     class Left: Root {}
+6 | |     class Right: Root {}
+7 | |     class Branch: Left, Right {}
+8 | |     class Diamond: Branch {}
+9 | | }
+  | |_^
+  |
+  = note: this warning originates in the macro `oop_class` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Diamond: OopBaseVia<Branch, Root>` is not satisfied
+  --> tests/trybuild/fail_ambiguous_via_type.rs:13:21
+   |
+13 |     let _ = diamond.as_base_via::<Branch, Root>();
+   |                     ^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `OopBaseVia<Branch, Root>` is not implemented for `Diamond`
+  --> tests/trybuild/fail_ambiguous_via_type.rs:3:1
+   |
+ 3 | / oop_class! {
+ 4 | |     class Root {}
+ 5 | |     class Left: Root {}
+ 6 | |     class Right: Root {}
+ 7 | |     class Branch: Left, Right {}
+ 8 | |     class Diamond: Branch {}
+   | |_________________^
+help: the following other types implement trait `OopBaseVia<Via, Target>`
+  --> tests/trybuild/fail_ambiguous_via_type.rs:3:1
+   |
+ 3 | / oop_class! {
+ 4 | |     class Root {}
+ 5 | |     class Left: Root {}
+ 6 | |     class Right: Root {}
+ 7 | |     class Branch: Left, Right {}
+ 8 | |     class Diamond: Branch {}
+   | |                 ^
+   | |                 |
+   | |                 `Diamond` implements `OopBaseVia<(Branch, Left), Root>`
+   | |                 `Diamond` implements `OopBaseVia<(Branch, Right), Root>`
+   | |_________________`Diamond` implements `OopBaseVia<Left, Root>`
+   |                   `Diamond` implements `OopBaseVia<Right, Root>`
+note: required by a bound in `as_base_via`
+  --> src/lib.rs
+   |
+   |     fn as_base_via<Via, Target>(&self) -> &Target
+   |        ----------- required by a bound in this associated function
+   |     where
+   |         Self: OopBaseVia<Via, Target>,
+   |               ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `OopBaseAccess::as_base_via`
+   = note: this error originates in the macro `oop_class` (in Nightly builds, run with -Z macro-backtrace for more info)

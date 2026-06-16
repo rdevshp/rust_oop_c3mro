@@ -10,6 +10,8 @@ pub(super) fn generate_vtable_struct(
     let class_ty = class_type_tokens(class);
     let cast_ref = vtable_cast_ref_field_ident();
     let cast_mut = vtable_cast_mut_field_ident();
+    let downcast_ref = vtable_downcast_ref_field_ident();
+    let downcast_mut = vtable_downcast_mut_field_ident();
     let fields = interface_methods(graph, index).into_iter().map(|method| {
         let field = vtable_field_ident(&method.name);
         let unsafety = &method.sig.unsafety;
@@ -50,6 +52,8 @@ pub(super) fn generate_vtable_struct(
             __oop_complete_class_id: usize,
             #cast_ref: unsafe fn(*const #class_ty, usize) -> ::core::option::Option<*const ()>,
             #cast_mut: unsafe fn(*mut #class_ty, usize) -> ::core::option::Option<*mut ()>,
+            #downcast_ref: unsafe fn(*const #class_ty, usize) -> ::core::option::Option<*const ()>,
+            #downcast_mut: unsafe fn(*mut #class_ty, usize) -> ::core::option::Option<*mut ()>,
             #(#fields,)*
         }
     }
@@ -87,8 +91,14 @@ fn generate_vtable_for_class_as(
     let vtable_factory = vtable_factory_ident(graph, class_index, &vtable_slot);
     let cast_ref_field = vtable_cast_ref_field_ident();
     let cast_mut_field = vtable_cast_mut_field_ident();
+    let downcast_ref_field = vtable_downcast_ref_field_ident();
+    let downcast_mut_field = vtable_downcast_mut_field_ident();
     let cast_ref_function = vtable_cast_ref_function_ident(graph, class_index, &vtable_slot);
     let cast_mut_function = vtable_cast_mut_function_ident(graph, class_index, &vtable_slot);
+    let downcast_ref_function =
+        vtable_downcast_ref_function_ident(graph, class_index, &vtable_slot);
+    let downcast_mut_function =
+        vtable_downcast_mut_function_ident(graph, class_index, &vtable_slot);
     let entries = interface_methods(graph, vtable_index)
         .into_iter()
         .map(|method| {
@@ -103,6 +113,8 @@ fn generate_vtable_for_class_as(
         .map(|method| generate_vtable_function(graph, class_index, &vtable_slot, &method));
     let cast_ref = generate_vtable_cast_function(graph, class_index, &vtable_slot, false);
     let cast_mut = generate_vtable_cast_function(graph, class_index, &vtable_slot, true);
+    let downcast_ref = generate_vtable_downcast_function(graph, class_index, &vtable_slot, false);
+    let downcast_mut = generate_vtable_downcast_function(graph, class_index, &vtable_slot, true);
 
     quote! {
         fn #vtable_factory #impl_generics () -> #vtable_type #where_clause {
@@ -110,12 +122,16 @@ fn generate_vtable_for_class_as(
                 __oop_complete_class_id: #class_index,
                 #cast_ref_field: #cast_ref_function,
                 #cast_mut_field: #cast_mut_function,
+                #downcast_ref_field: #downcast_ref_function,
+                #downcast_mut_field: #downcast_mut_function,
                 #(#entries,)*
             }
         }
 
         #cast_ref
         #cast_mut
+        #downcast_ref
+        #downcast_mut
         #(#functions)*
     }
 }
@@ -135,34 +151,113 @@ fn generate_vtable_cast_function(
     };
     let receiver_ty = ancestor_type_for_path(graph, class_index, &vtable_slot.path);
     let complete = complete_from_receiver_expr(graph, class_index, &vtable_slot.path, mutable);
-    let arms = ancestor_views(graph, class_index).into_iter().map(|view| {
-        let target = view.class_index;
-        let target_id = cast_target_id(graph, target, &view.actual);
-        let pointer = if target == class_index && view.path.is_empty() {
-            if mutable {
-                quote! { complete as *mut _ as *mut () }
+    let arms = vtable_cast_views(graph, class_index, vtable_slot)
+        .into_iter()
+        .map(|view| {
+            let target = view.class_index;
+            let target_id = cast_target_id(graph, target, &view.actual);
+            let pointer = if target == class_index && view.path.is_empty() {
+                if mutable {
+                    quote! { complete as *mut _ as *mut () }
+                } else {
+                    quote! { complete as *const _ as *const () }
+                }
             } else {
-                quote! { complete as *const _ as *const () }
-            }
-        } else {
-            let target_ref = static_ref_expr_for_path(
-                graph,
-                class_index,
-                &view.path,
-                quote! { complete },
-                mutable,
-            );
-            if mutable {
-                quote! { #target_ref as *mut _ as *mut () }
-            } else {
-                quote! { #target_ref as *const _ as *const () }
-            }
-        };
+                let target_ref = static_ref_expr_for_path(
+                    graph,
+                    class_index,
+                    &view.path,
+                    quote! { complete },
+                    mutable,
+                );
+                if mutable {
+                    quote! { #target_ref as *mut _ as *mut () }
+                } else {
+                    quote! { #target_ref as *const _ as *const () }
+                }
+            };
 
+            quote! {
+                #target_id => ::core::option::Option::Some(#pointer)
+            }
+        });
+
+    if mutable {
         quote! {
-            #target_id => ::core::option::Option::Some(#pointer)
+            unsafe fn #function #impl_generics (
+                receiver: *mut #receiver_ty,
+                target: usize,
+            ) -> ::core::option::Option<*mut ()> #where_clause {
+                let receiver = unsafe { &mut *receiver };
+                let complete = #complete;
+                match target {
+                    #(#arms,)*
+                    _ => ::core::option::Option::None,
+                }
+            }
         }
-    });
+    } else {
+        quote! {
+            unsafe fn #function #impl_generics (
+                receiver: *const #receiver_ty,
+                target: usize,
+            ) -> ::core::option::Option<*const ()> #where_clause {
+                let receiver = unsafe { &*receiver };
+                let complete = #complete;
+                match target {
+                    #(#arms,)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        }
+    }
+}
+
+fn generate_vtable_downcast_function(
+    graph: &Graph,
+    class_index: usize,
+    vtable_slot: &VtableSlot,
+    mutable: bool,
+) -> TokenStream2 {
+    let class = &graph.classes[class_index];
+    let (impl_generics, _, where_clause) = class.generics.split_for_impl();
+    let function = if mutable {
+        vtable_downcast_mut_function_ident(graph, class_index, vtable_slot)
+    } else {
+        vtable_downcast_ref_function_ident(graph, class_index, vtable_slot)
+    };
+    let receiver_ty = ancestor_type_for_path(graph, class_index, &vtable_slot.path);
+    let complete = complete_from_receiver_expr(graph, class_index, &vtable_slot.path, mutable);
+    let arms = downcast_target_views_for_source_path(graph, class_index, &vtable_slot.path)
+        .into_iter()
+        .map(|view| {
+            let target = view.class_index;
+            let target_id = cast_target_id(graph, target, &view.actual);
+            let pointer = if target == class_index && view.path.is_empty() {
+                if mutable {
+                    quote! { complete as *mut _ as *mut () }
+                } else {
+                    quote! { complete as *const _ as *const () }
+                }
+            } else {
+                let target_ref = static_ref_expr_for_path(
+                    graph,
+                    class_index,
+                    &view.path,
+                    quote! { complete },
+                    mutable,
+                );
+                if mutable {
+                    quote! { #target_ref as *mut _ as *mut () }
+                } else {
+                    quote! { #target_ref as *const _ as *const () }
+                }
+            };
+
+            quote! {
+                #target_id => ::core::option::Option::Some(#pointer)
+            }
+        });
 
     if mutable {
         quote! {
