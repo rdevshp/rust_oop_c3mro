@@ -5,7 +5,7 @@ use quote::{format_ident, quote, ToTokens};
 use syn::visit_mut::{self, VisitMut};
 use syn::{
     parse_quote, Expr, GenericArgument, GenericParam, Generics, Ident, Lifetime, PathArguments,
-    Type,
+    ReturnType, Token, Type, TypeParamBound,
 };
 
 use crate::ast::{
@@ -204,31 +204,55 @@ fn unify_candidate_type(
     }
 
     match (pattern, expected) {
-        (Type::Path(pattern), Type::Path(expected))
-            if pattern.qself.is_none() && expected.qself.is_none() =>
-        {
-            if pattern.path.segments.len() != expected.path.segments.len() {
-                return type_key(&Type::Path(pattern.clone()))
-                    == type_key(&Type::Path(expected.clone()));
-            }
-
-            for (pattern, expected) in pattern.path.segments.iter().zip(&expected.path.segments) {
-                if pattern.ident != expected.ident {
-                    return false;
-                }
-                if !unify_candidate_path_arguments(
-                    &pattern.arguments,
-                    &expected.arguments,
+        (Type::Array(pattern), Type::Array(expected)) => {
+            unify_candidate_type(&pattern.elem, &expected.elem, params, substitutions)
+                && unify_candidate_expr(&pattern.len, &expected.len, params, substitutions)
+        }
+        (Type::BareFn(pattern), Type::BareFn(expected)) => {
+            same_tokens(&pattern.lifetimes, &expected.lifetimes)
+                && pattern.unsafety.is_some() == expected.unsafety.is_some()
+                && same_tokens(&pattern.abi, &expected.abi)
+                && pattern.variadic.is_some() == expected.variadic.is_some()
+                && pattern.inputs.len() == expected.inputs.len()
+                && pattern
+                    .inputs
+                    .iter()
+                    .zip(&expected.inputs)
+                    .all(|(pattern, expected)| {
+                        unify_candidate_type(&pattern.ty, &expected.ty, params, substitutions)
+                    })
+                && unify_candidate_return_type(
+                    &pattern.output,
+                    &expected.output,
                     params,
                     substitutions,
-                ) {
-                    return false;
-                }
-            }
-
-            true
+                )
+        }
+        (Type::Group(pattern), Type::Group(expected)) => {
+            unify_candidate_type(&pattern.elem, &expected.elem, params, substitutions)
+        }
+        (Type::ImplTrait(pattern), Type::ImplTrait(expected)) => unify_candidate_type_param_bounds(
+            &pattern.bounds,
+            &expected.bounds,
+            params,
+            substitutions,
+        ),
+        (Type::Paren(pattern), Type::Paren(expected)) => {
+            unify_candidate_type(&pattern.elem, &expected.elem, params, substitutions)
+        }
+        (Type::Path(pattern), Type::Path(expected)) => {
+            unify_candidate_qself(&pattern.qself, &expected.qself, params, substitutions)
+                && unify_candidate_path(&pattern.path, &expected.path, params, substitutions)
+        }
+        (Type::Ptr(pattern), Type::Ptr(expected)) => {
+            pattern.const_token.is_some() == expected.const_token.is_some()
+                && pattern.mutability.is_some() == expected.mutability.is_some()
+                && unify_candidate_type(&pattern.elem, &expected.elem, params, substitutions)
         }
         (Type::Reference(pattern), Type::Reference(expected)) => {
+            if pattern.mutability.is_some() != expected.mutability.is_some() {
+                return false;
+            }
             match (&pattern.lifetime, &expected.lifetime) {
                 (Some(pattern), Some(expected)) => {
                     if !unify_candidate_lifetime(pattern, expected, params, substitutions) {
@@ -240,6 +264,18 @@ fn unify_candidate_type(
             }
             unify_candidate_type(&pattern.elem, &expected.elem, params, substitutions)
         }
+        (Type::Slice(pattern), Type::Slice(expected)) => {
+            unify_candidate_type(&pattern.elem, &expected.elem, params, substitutions)
+        }
+        (Type::TraitObject(pattern), Type::TraitObject(expected)) => {
+            pattern.dyn_token.is_some() == expected.dyn_token.is_some()
+                && unify_candidate_type_param_bounds(
+                    &pattern.bounds,
+                    &expected.bounds,
+                    params,
+                    substitutions,
+                )
+        }
         (Type::Tuple(pattern), Type::Tuple(expected)) => {
             pattern.elems.len() == expected.elems.len()
                 && pattern
@@ -250,12 +286,67 @@ fn unify_candidate_type(
                         unify_candidate_type(pattern, expected, params, substitutions)
                     })
         }
-        (Type::Array(pattern), Type::Array(expected)) => {
-            unify_candidate_type(&pattern.elem, &expected.elem, params, substitutions)
-                && unify_candidate_expr(&pattern.len, &expected.len, params, substitutions)
-        }
         _ => type_key(pattern) == type_key(expected),
     }
+}
+
+fn unify_candidate_return_type(
+    pattern: &ReturnType,
+    expected: &ReturnType,
+    params: &CandidateGenericParams,
+    substitutions: &mut ActualGenericSubstitutions,
+) -> bool {
+    match (pattern, expected) {
+        (ReturnType::Default, ReturnType::Default) => true,
+        (ReturnType::Type(_, pattern), ReturnType::Type(_, expected)) => {
+            unify_candidate_type(pattern, expected, params, substitutions)
+        }
+        _ => false,
+    }
+}
+
+fn unify_candidate_qself(
+    pattern: &Option<syn::QSelf>,
+    expected: &Option<syn::QSelf>,
+    params: &CandidateGenericParams,
+    substitutions: &mut ActualGenericSubstitutions,
+) -> bool {
+    match (pattern, expected) {
+        (Some(pattern), Some(expected)) => {
+            pattern.position == expected.position
+                && pattern.as_token.is_some() == expected.as_token.is_some()
+                && unify_candidate_type(&pattern.ty, &expected.ty, params, substitutions)
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn unify_candidate_path(
+    pattern: &syn::Path,
+    expected: &syn::Path,
+    params: &CandidateGenericParams,
+    substitutions: &mut ActualGenericSubstitutions,
+) -> bool {
+    if pattern.leading_colon.is_some() != expected.leading_colon.is_some()
+        || pattern.segments.len() != expected.segments.len()
+    {
+        return same_tokens(pattern, expected);
+    }
+
+    pattern
+        .segments
+        .iter()
+        .zip(&expected.segments)
+        .all(|(pattern, expected)| {
+            pattern.ident == expected.ident
+                && unify_candidate_path_arguments(
+                    &pattern.arguments,
+                    &expected.arguments,
+                    params,
+                    substitutions,
+                )
+        })
 }
 
 fn unify_candidate_path_arguments(
@@ -276,7 +367,23 @@ fn unify_candidate_path_arguments(
                         unify_candidate_generic_argument(pattern, expected, params, substitutions)
                     })
         }
-        _ => pattern.to_token_stream().to_string() == expected.to_token_stream().to_string(),
+        (PathArguments::Parenthesized(pattern), PathArguments::Parenthesized(expected)) => {
+            pattern.inputs.len() == expected.inputs.len()
+                && pattern
+                    .inputs
+                    .iter()
+                    .zip(&expected.inputs)
+                    .all(|(pattern, expected)| {
+                        unify_candidate_type(pattern, expected, params, substitutions)
+                    })
+                && unify_candidate_return_type(
+                    &pattern.output,
+                    &expected.output,
+                    params,
+                    substitutions,
+                )
+        }
+        _ => same_tokens(pattern, expected),
     }
 }
 
@@ -286,6 +393,15 @@ fn unify_candidate_generic_argument(
     params: &CandidateGenericParams,
     substitutions: &mut ActualGenericSubstitutions,
 ) -> bool {
+    if let GenericArgument::Type(pattern) = pattern {
+        if let Some(param) = bare_const_type_param(pattern, params) {
+            let Some(expected) = const_expr_from_generic_argument(expected) else {
+                return false;
+            };
+            return bind_const_param(param, expected, substitutions);
+        }
+    }
+
     match (pattern, expected) {
         (GenericArgument::Type(pattern), GenericArgument::Type(expected)) => {
             unify_candidate_type(pattern, expected, params, substitutions)
@@ -293,10 +409,102 @@ fn unify_candidate_generic_argument(
         (GenericArgument::Lifetime(pattern), GenericArgument::Lifetime(expected)) => {
             unify_candidate_lifetime(pattern, expected, params, substitutions)
         }
-        (GenericArgument::Const(pattern), GenericArgument::Const(expected)) => {
-            unify_candidate_expr(pattern, expected, params, substitutions)
+        (GenericArgument::Const(pattern), expected) => {
+            let Some(expected) = const_expr_from_generic_argument(expected) else {
+                return false;
+            };
+            unify_candidate_expr(pattern, &expected, params, substitutions)
         }
-        _ => pattern.to_token_stream().to_string() == expected.to_token_stream().to_string(),
+        (GenericArgument::AssocType(pattern), GenericArgument::AssocType(expected)) => {
+            pattern.ident == expected.ident
+                && unify_candidate_optional_angle_arguments(
+                    &pattern.generics,
+                    &expected.generics,
+                    params,
+                    substitutions,
+                )
+                && unify_candidate_type(&pattern.ty, &expected.ty, params, substitutions)
+        }
+        (GenericArgument::AssocConst(pattern), GenericArgument::AssocConst(expected)) => {
+            pattern.ident == expected.ident
+                && unify_candidate_optional_angle_arguments(
+                    &pattern.generics,
+                    &expected.generics,
+                    params,
+                    substitutions,
+                )
+                && unify_candidate_expr(&pattern.value, &expected.value, params, substitutions)
+        }
+        (GenericArgument::Constraint(pattern), GenericArgument::Constraint(expected)) => {
+            pattern.ident == expected.ident
+                && unify_candidate_optional_angle_arguments(
+                    &pattern.generics,
+                    &expected.generics,
+                    params,
+                    substitutions,
+                )
+                && unify_candidate_type_param_bounds(
+                    &pattern.bounds,
+                    &expected.bounds,
+                    params,
+                    substitutions,
+                )
+        }
+        _ => same_tokens(pattern, expected),
+    }
+}
+
+fn unify_candidate_optional_angle_arguments(
+    pattern: &Option<syn::AngleBracketedGenericArguments>,
+    expected: &Option<syn::AngleBracketedGenericArguments>,
+    params: &CandidateGenericParams,
+    substitutions: &mut ActualGenericSubstitutions,
+) -> bool {
+    match (pattern, expected) {
+        (Some(pattern), Some(expected)) => {
+            pattern.args.len() == expected.args.len()
+                && pattern
+                    .args
+                    .iter()
+                    .zip(&expected.args)
+                    .all(|(pattern, expected)| {
+                        unify_candidate_generic_argument(pattern, expected, params, substitutions)
+                    })
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn unify_candidate_type_param_bounds(
+    pattern: &syn::punctuated::Punctuated<TypeParamBound, Token![+]>,
+    expected: &syn::punctuated::Punctuated<TypeParamBound, Token![+]>,
+    params: &CandidateGenericParams,
+    substitutions: &mut ActualGenericSubstitutions,
+) -> bool {
+    pattern.len() == expected.len()
+        && pattern.iter().zip(expected).all(|(pattern, expected)| {
+            unify_candidate_type_param_bound(pattern, expected, params, substitutions)
+        })
+}
+
+fn unify_candidate_type_param_bound(
+    pattern: &TypeParamBound,
+    expected: &TypeParamBound,
+    params: &CandidateGenericParams,
+    substitutions: &mut ActualGenericSubstitutions,
+) -> bool {
+    match (pattern, expected) {
+        (TypeParamBound::Trait(pattern), TypeParamBound::Trait(expected)) => {
+            pattern.paren_token.is_some() == expected.paren_token.is_some()
+                && same_tokens(&pattern.modifier, &expected.modifier)
+                && same_tokens(&pattern.lifetimes, &expected.lifetimes)
+                && unify_candidate_path(&pattern.path, &expected.path, params, substitutions)
+        }
+        (TypeParamBound::Lifetime(pattern), TypeParamBound::Lifetime(expected)) => {
+            unify_candidate_lifetime(pattern, expected, params, substitutions)
+        }
+        _ => same_tokens(pattern, expected),
     }
 }
 
@@ -342,6 +550,21 @@ fn bare_type_param(ty: &Type, params: &CandidateGenericParams) -> Option<String>
     params.types.contains(&name).then_some(name)
 }
 
+fn bare_const_type_param(ty: &Type, params: &CandidateGenericParams) -> Option<String> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() || path.path.segments.len() != 1 {
+        return None;
+    }
+    let segment = &path.path.segments[0];
+    if !matches!(segment.arguments, PathArguments::None) {
+        return None;
+    }
+    let name = segment.ident.to_string();
+    params.consts.contains(&name).then_some(name)
+}
+
 fn bare_const_param(expr: &Expr, params: &CandidateGenericParams) -> Option<String> {
     let Expr::Path(path) = expr else {
         return None;
@@ -351,6 +574,18 @@ fn bare_const_param(expr: &Expr, params: &CandidateGenericParams) -> Option<Stri
     }
     let name = path.path.segments[0].ident.to_string();
     params.consts.contains(&name).then_some(name)
+}
+
+fn const_expr_from_generic_argument(argument: &GenericArgument) -> Option<Expr> {
+    match argument {
+        GenericArgument::Const(expr) => Some(expr.clone()),
+        GenericArgument::Type(ty) => syn::parse2(ty.to_token_stream()).ok(),
+        _ => None,
+    }
+}
+
+fn same_tokens<T: ToTokens + ?Sized>(pattern: &T, expected: &T) -> bool {
+    pattern.to_token_stream().to_string() == expected.to_token_stream().to_string()
 }
 
 fn bind_type_param(
@@ -397,6 +632,19 @@ struct ActualGenericSubstituter {
 }
 
 impl VisitMut for ActualGenericSubstituter {
+    fn visit_generic_argument_mut(&mut self, node: &mut GenericArgument) {
+        if let GenericArgument::Type(ty) = node {
+            if let Some(param) = bare_type_name(ty) {
+                if let Some(replacement) = self.substitutions.consts.get(&param) {
+                    *node = GenericArgument::Const(replacement.clone());
+                    return;
+                }
+            }
+        }
+
+        visit_mut::visit_generic_argument_mut(self, node);
+    }
+
     fn visit_type_mut(&mut self, node: &mut Type) {
         if let Some(param) = bare_type_name(node) {
             if let Some(replacement) = self.substitutions.types.get(&param) {

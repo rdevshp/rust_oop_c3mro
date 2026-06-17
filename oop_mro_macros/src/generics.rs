@@ -109,16 +109,24 @@ pub(crate) fn substitutions_for_class_type(class: &ClassDef, ty: &Type) -> Gener
                     .lifetimes
                     .insert(param.lifetime.ident.to_string(), lifetime.clone());
             }
-            (GenericParam::Const(param), GenericArgument::Const(expr)) => {
-                substitutions
-                    .consts
-                    .insert(param.ident.to_string(), expr.clone());
+            (GenericParam::Const(param), argument) => {
+                if let Some(expr) = const_expr_from_generic_argument(argument) {
+                    substitutions.consts.insert(param.ident.to_string(), expr);
+                }
             }
             _ => {}
         }
     }
 
     substitutions
+}
+
+fn const_expr_from_generic_argument(argument: &GenericArgument) -> Option<Expr> {
+    match argument {
+        GenericArgument::Const(expr) => Some(expr.clone()),
+        GenericArgument::Type(ty) => syn::parse2(ty.to_token_stream()).ok(),
+        _ => None,
+    }
 }
 
 fn class_type_arguments(ty: &Type) -> Option<&Punctuated<GenericArgument, Token![,]>> {
@@ -173,6 +181,19 @@ struct GenericSubstituter<'a> {
 }
 
 impl VisitMut for GenericSubstituter<'_> {
+    fn visit_generic_argument_mut(&mut self, node: &mut GenericArgument) {
+        if let GenericArgument::Type(ty) = node {
+            if let Some(param) = bare_path_type_ident(ty) {
+                if let Some(replacement) = self.substitutions.consts.get(&param) {
+                    *node = GenericArgument::Const(replacement.clone());
+                    return;
+                }
+            }
+        }
+
+        visit_mut::visit_generic_argument_mut(self, node);
+    }
+
     fn visit_type_mut(&mut self, node: &mut Type) {
         if let Type::Path(path) = node {
             if path.qself.is_none() && path.path.segments.len() == 1 {
@@ -213,4 +234,15 @@ impl VisitMut for GenericSubstituter<'_> {
 
         visit_mut::visit_expr_mut(self, node);
     }
+}
+
+fn bare_path_type_ident(ty: &Type) -> Option<String> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() || path.path.segments.len() != 1 {
+        return None;
+    }
+    let segment = &path.path.segments[0];
+    matches!(segment.arguments, PathArguments::None).then(|| segment.ident.to_string())
 }
