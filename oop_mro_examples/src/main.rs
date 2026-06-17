@@ -452,6 +452,101 @@ fn virtual_inheritance_examples() {
 }
 
 oop_class! {
+    class DirectVirtualExampleRoot {
+        value: usize,
+
+        constructor(value: usize) {
+            self.value = value;
+        }
+
+        virtual fn value(&self) -> usize {
+            self.value
+        }
+
+        fn set_value(&mut self, value: usize) {
+            self.value = value;
+        }
+    }
+
+    class DirectVirtualExampleBranch: DirectVirtualExampleRoot {
+        constructor(): DirectVirtualExampleRoot(2) {}
+    }
+
+    class DirectVirtualExampleMixed: virtual DirectVirtualExampleRoot, DirectVirtualExampleBranch {
+        constructor(): DirectVirtualExampleRoot(5), DirectVirtualExampleBranch() {}
+    }
+}
+
+fn direct_virtual_base_path_cast_examples() {
+    let mut mixed = DirectVirtualExampleMixed::new();
+    let direct_virtual_root =
+        mixed.as_base_via::<DirectVirtualExampleRoot, DirectVirtualExampleRoot>();
+    let indirect_branch_root =
+        mixed.as_base_via::<DirectVirtualExampleBranch, DirectVirtualExampleRoot>();
+
+    assert_ne!(
+        direct_virtual_root as *const DirectVirtualExampleRoot,
+        indirect_branch_root as *const DirectVirtualExampleRoot,
+    );
+    assert_eq!(direct_virtual_root.value(), 5);
+    assert_eq!(indirect_branch_root.value(), 2);
+
+    assert!(direct_virtual_root
+        .downcast_ref::<DirectVirtualExampleBranch>()
+        .is_none());
+    assert!(indirect_branch_root
+        .downcast_ref::<DirectVirtualExampleBranch>()
+        .is_some());
+    assert!(direct_virtual_root
+        .downcast_ref::<DirectVirtualExampleMixed>()
+        .is_some());
+    assert!(indirect_branch_root
+        .downcast_ref::<DirectVirtualExampleMixed>()
+        .is_some());
+
+    mixed
+        .as_base_via_mut::<DirectVirtualExampleRoot, DirectVirtualExampleRoot>()
+        .set_value(11);
+    mixed
+        .as_base_via_mut::<DirectVirtualExampleBranch, DirectVirtualExampleRoot>()
+        .set_value(22);
+    assert_eq!(
+        mixed
+            .as_base_via::<DirectVirtualExampleRoot, DirectVirtualExampleRoot>()
+            .value(),
+        11
+    );
+    assert_eq!(
+        mixed
+            .as_base_via::<DirectVirtualExampleBranch, DirectVirtualExampleRoot>()
+            .value(),
+        22
+    );
+
+    let root: Box<dyn AsDirectVirtualExampleRoot> = Box::new(DirectVirtualExampleMixed::new())
+        .into_base_via::<DirectVirtualExampleRoot, dyn AsDirectVirtualExampleRoot>(
+    );
+    assert_eq!(root.as_direct_virtual_example_root().value(), 5);
+
+    let root = match root.downcast::<dyn AsDirectVirtualExampleBranch>() {
+        Ok(_) => panic!("direct virtual root should not downcast to branch path"),
+        Err(root) => root,
+    };
+    let mixed = match root.downcast::<dyn AsDirectVirtualExampleMixed>() {
+        Ok(mixed) => mixed,
+        Err(_) => panic!("direct virtual root should downcast to complete mixed object"),
+    };
+    assert_eq!(
+        mixed
+            .as_direct_virtual_example_mixed()
+            .as_base_via::<DirectVirtualExampleRoot, DirectVirtualExampleRoot>()
+            .value(),
+        5
+    );
+    println!("direct virtual base path cast examples passed");
+}
+
+oop_class! {
     class MixedExampleRoot {
         value: usize,
 
@@ -677,6 +772,7 @@ fn main() {
     document_examples();
     path_upcast_and_downcast_examples();
     virtual_inheritance_examples();
+    direct_virtual_base_path_cast_examples();
     mixed_inheritance_path_cast_examples();
     let job_factory = job_factory_examples();
     ticket_registry_examples();
