@@ -1,15 +1,5 @@
 use super::*;
 
-pub(super) fn generate_private_module(graph: &Graph) -> TokenStream2 {
-    let module = private_module_ident(graph);
-
-    quote! {
-        mod #module {
-            pub struct Seal;
-        }
-    }
-}
-
 pub(super) fn generate_struct(graph: &Graph, index: usize, class: &ClassDef) -> TokenStream2 {
     let attrs = &class.attrs;
     let vis = public_if_inherited(&class.vis);

@@ -9,6 +9,6 @@ oop_class! {
 }
 
 fn main() {
-    let diamond: Box<dyn AsDiamond> = Box::new(Diamond::default());
-    let _ = diamond.into_base_via::<Branch, dyn AsRoot>();
+    let diamond: Box<dyn AsClass<Diamond>> = Box::new(Diamond::default());
+    let _ = diamond.into_base_via::<Branch, dyn AsClass<Root>>();
 }

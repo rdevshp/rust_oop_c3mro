@@ -13,7 +13,7 @@ use crate::generics::{
 };
 use crate::model::{Graph, MethodInfo, ReceiverKind, VtableSlot};
 use crate::names::{
-    base_field_ident, default_base_trait_ident, private_module_ident, static_field_ident, to_snake,
+    base_field_ident, default_base_trait_ident, static_field_ident, to_snake,
     virtual_base_field_ident, virtual_impl_ident, vtable_cast_mut_field_ident,
     vtable_cast_mut_function_ident, vtable_cast_ref_field_ident, vtable_cast_ref_function_ident,
     vtable_downcast_mut_field_ident, vtable_downcast_mut_function_ident,
@@ -21,11 +21,11 @@ use crate::names::{
     vtable_field_ident, vtable_function_ident, vtable_ident,
 };
 use crate::types::{
-    ancestor_type, ancestor_type_for_path, async_dispatch_lifetime, async_output_type,
-    base_cast_trait_for_actual_class, boxed_future_type, cast_target_key, class_constructor,
-    class_type, class_type_tokens, constructor_arg_idents, find_base_path,
-    generics_with_async_lifetime, signature_in_context, type_key, type_with_elided_refs_lifetime,
-    vtable_type_for_actual_class, vtable_type_for_class,
+    ancestor_type, ancestor_type_for_path, as_class_trait_for_actual, async_dispatch_lifetime,
+    async_output_type, boxed_future_type, cast_target_key, class_constructor, class_type,
+    class_type_tokens, constructor_arg_idents, find_base_path, generics_with_async_lifetime,
+    signature_in_context, type_key, type_with_elided_refs_lifetime, vtable_type_for_actual_class,
+    vtable_type_for_class,
 };
 use crate::validate::public_if_inherited;
 
@@ -40,7 +40,6 @@ mod vtables;
 
 pub(crate) fn generate(graph: &Graph) -> TokenStream2 {
     let warnings = generate_compile_warnings(graph);
-    let private_module = structs::generate_private_module(graph);
     let static_fields = statics::generate_static_fields(graph);
     let vtable_structs = graph
         .classes
@@ -53,11 +52,6 @@ pub(crate) fn generate(graph: &Graph) -> TokenStream2 {
         .iter()
         .enumerate()
         .map(|(index, class)| structs::generate_struct(graph, index, class));
-    let base_cast_traits = graph
-        .classes
-        .iter()
-        .enumerate()
-        .map(|(index, class)| casts::generate_base_cast_trait(graph, index, class));
     let impls = graph
         .classes
         .iter()
@@ -69,11 +63,9 @@ pub(crate) fn generate(graph: &Graph) -> TokenStream2 {
 
     quote! {
         #warnings
-        #private_module
         #static_fields
         #(#vtable_structs)*
         #(#structs)*
-        #(#base_cast_traits)*
         #(#impls)*
         #base_cast_impls
         #vtable_items
@@ -351,12 +343,6 @@ fn storage_parts_for_path(graph: &Graph, complete: usize, path: &[usize]) -> Vec
     parts
 }
 
-fn is_unambiguous_ancestor(graph: &Graph, start: usize, target: usize, actual: &Type) -> bool {
-    ancestor_views(graph, start)
-        .into_iter()
-        .any(|view| view.class_index == target && type_key(&view.actual) == type_key(actual))
-}
-
 fn subobject_id(graph: &Graph, complete: usize, path: &[usize]) -> usize {
     let target_key = subobject_id_key(graph, complete, path);
     let mut keys = Vec::new();
@@ -441,28 +427,6 @@ fn downcast_target_views_for_source_path(
             },
         )
         .collect()
-}
-
-fn base_supertrait_is_unambiguous_for_all_impls(
-    graph: &Graph,
-    trait_index: usize,
-    base_index: usize,
-) -> bool {
-    for complete in 0..graph.classes.len() {
-        for view in ancestor_views(graph, complete)
-            .into_iter()
-            .filter(|view| view.class_index == trait_index)
-        {
-            let mut base_path = view.path;
-            base_path.push(base_index);
-            let actual = ancestor_type_for_path(graph, complete, &base_path);
-            if !is_unambiguous_ancestor(graph, complete, base_index, &actual) {
-                return false;
-            }
-        }
-    }
-
-    true
 }
 
 fn vtable_cast_views(graph: &Graph, complete: usize, slot: &VtableSlot) -> Vec<AncestorView> {

@@ -81,7 +81,7 @@ fn animal_examples() {
         */
     }
 
-    let animals: Vec<Box<dyn AsAnimal>> = vec![
+    let animals: Vec<Box<dyn AsClass<Animal>>> = vec![
         Box::new(Dog::new(String::from("Dog2"))),
         Box::new(Kangaroo::new(String::from("Kangaroo2"))),
     ];
@@ -199,19 +199,20 @@ fn path_upcast_and_downcast_examples() {
     assert!(right_root.downcast_ref::<PathExampleRight>().is_some());
     assert!(right_root.downcast_ref::<PathExampleLeft>().is_none());
 
-    let root: Box<dyn AsPathExampleRoot> = Box::new(PathExampleDiamond::new())
-        .into_base_via::<PathExampleRight, dyn AsPathExampleRoot>();
+    let root: Box<dyn AsClass<PathExampleRoot>> = Box::new(PathExampleDiamond::new())
+        .into_base_via::<PathExampleRight, dyn AsClass<PathExampleRoot>>(
+    );
     assert_eq!(root.as_base::<PathExampleRoot>().label(), "right-root");
 
-    let root = match root.downcast::<dyn AsPathExampleLeft>() {
+    let root = match root.downcast::<dyn AsClass<PathExampleLeft>>() {
         Ok(_) => panic!("right root should not downcast to left path"),
         Err(root) => root,
     };
-    let right = match root.downcast::<dyn AsPathExampleRight>() {
+    let right = match root.downcast::<dyn AsClass<PathExampleRight>>() {
         Ok(right) => right,
         Err(_) => panic!("right root should downcast to right path"),
     };
-    let diamond = match right.downcast::<dyn AsPathExampleDiamond>() {
+    let diamond = match right.downcast::<dyn AsClass<PathExampleDiamond>>() {
         Ok(diamond) => diamond,
         Err(_) => panic!("right path should downcast to complete diamond"),
     };
@@ -262,20 +263,19 @@ fn long_path_upcast_and_downcast_example() {
         .downcast_ref::<PathExampleNested>()
         .is_some());
 
-    let root: Box<dyn AsPathExampleRoot> =
-        Box::new(PathExampleNested::new())
-            .into_base_via::<(PathExampleBranch, PathExampleRight), dyn AsPathExampleRoot>();
+    let root: Box<dyn AsClass<PathExampleRoot>> = Box::new(PathExampleNested::new())
+        .into_base_via::<(PathExampleBranch, PathExampleRight), dyn AsClass<PathExampleRoot>>();
     assert_eq!(root.as_base::<PathExampleRoot>().label(), "right-root");
 
-    let root = match root.downcast::<dyn AsPathExampleLeft>() {
+    let root = match root.downcast::<dyn AsClass<PathExampleLeft>>() {
         Ok(_) => panic!("right nested root should not downcast to left path"),
         Err(root) => root,
     };
-    let branch = match root.downcast::<dyn AsPathExampleBranch>() {
+    let branch = match root.downcast::<dyn AsClass<PathExampleBranch>>() {
         Ok(branch) => branch,
         Err(_) => panic!("right nested root should downcast to branch"),
     };
-    let nested = match branch.downcast::<dyn AsPathExampleNested>() {
+    let nested = match branch.downcast::<dyn AsClass<PathExampleNested>>() {
         Ok(nested) => nested,
         Err(_) => panic!("branch path should downcast to complete nested object"),
     };
@@ -317,23 +317,24 @@ fn generic_long_path_upcast_and_downcast_example<T>() {
 }
 
 fn concrete_generic_owned_long_path_upcast_and_downcast_example() {
-    let root: Box<dyn AsPathExampleRoot> = Box::new(PathExampleGenericNested::<u8>::new())
-        .into_base_via::<(PathExampleGenericBranch<u8>, PathExampleRight), dyn AsPathExampleRoot>(
+    let root: Box<dyn AsClass<PathExampleRoot>> = Box::new(PathExampleGenericNested::<u8>::new())
+        .into_base_via::<(PathExampleGenericBranch<u8>, PathExampleRight), dyn AsClass<PathExampleRoot>>(
     );
     assert_eq!(root.as_base::<PathExampleRoot>().label(), "right-root");
 
-    let root = match root.downcast::<dyn AsPathExampleLeft>() {
+    let root = match root.downcast::<dyn AsClass<PathExampleLeft>>() {
         Ok(_) => panic!("generic right nested root should not downcast to left path"),
         Err(root) => root,
     };
-    let generic_branch = match root.downcast::<dyn AsPathExampleGenericBranch<u8>>() {
+    let generic_branch = match root.downcast::<dyn AsClass<PathExampleGenericBranch<u8>>>() {
         Ok(generic_branch) => generic_branch,
         Err(_) => panic!("generic right nested root should downcast to generic branch"),
     };
-    let generic_nested = match generic_branch.downcast::<dyn AsPathExampleGenericNested<u8>>() {
-        Ok(generic_nested) => generic_nested,
-        Err(_) => panic!("generic branch should downcast to complete nested object"),
-    };
+    let generic_nested =
+        match generic_branch.downcast::<dyn AsClass<PathExampleGenericNested<u8>>>() {
+            Ok(generic_nested) => generic_nested,
+            Err(_) => panic!("generic branch should downcast to complete nested object"),
+        };
 
     assert_eq!(
         generic_nested
@@ -435,10 +436,10 @@ fn virtual_inheritance_examples() {
         .set_value(41);
     assert_eq!(diamond.as_base::<VirtualExampleRoot>().value(), 41);
 
-    let root: Box<dyn AsVirtualExampleRoot> = Box::new(VirtualExampleDiamond::new());
+    let root: Box<dyn AsClass<VirtualExampleRoot>> = Box::new(VirtualExampleDiamond::new());
     assert_eq!(root.as_base::<VirtualExampleRoot>().dispatched_value(), 110);
 
-    let left = match root.downcast::<dyn AsVirtualExampleLeft>() {
+    let left = match root.downcast::<dyn AsClass<VirtualExampleLeft>>() {
         Ok(left) => left,
         Err(_) => panic!("virtual root should downcast to left branch"),
     };
@@ -449,7 +450,7 @@ fn virtual_inheritance_examples() {
         10
     );
 
-    let diamond = match left.downcast::<dyn AsVirtualExampleDiamond>() {
+    let diamond = match left.downcast::<dyn AsClass<VirtualExampleDiamond>>() {
         Ok(diamond) => diamond,
         Err(_) => panic!("left branch should downcast to complete diamond"),
     };
@@ -535,16 +536,16 @@ fn direct_virtual_base_path_cast_examples() {
         22
     );
 
-    let root: Box<dyn AsDirectVirtualExampleRoot> = Box::new(DirectVirtualExampleMixed::new())
-        .into_base_via::<DirectVirtualExampleRoot, dyn AsDirectVirtualExampleRoot>(
-    );
+    let root: Box<dyn AsClass<DirectVirtualExampleRoot>> =
+        Box::new(DirectVirtualExampleMixed::new())
+            .into_base_via::<DirectVirtualExampleRoot, dyn AsClass<DirectVirtualExampleRoot>>();
     assert_eq!(root.as_base::<DirectVirtualExampleRoot>().value(), 5);
 
-    let root = match root.downcast::<dyn AsDirectVirtualExampleBranch>() {
+    let root = match root.downcast::<dyn AsClass<DirectVirtualExampleBranch>>() {
         Ok(_) => panic!("direct virtual root should not downcast to branch path"),
         Err(root) => root,
     };
-    let mixed = match root.downcast::<dyn AsDirectVirtualExampleMixed>() {
+    let mixed = match root.downcast::<dyn AsClass<DirectVirtualExampleMixed>>() {
         Ok(mixed) => mixed,
         Err(_) => panic!("direct virtual root should downcast to complete mixed object"),
     };
@@ -636,7 +637,7 @@ fn mixed_inheritance_path_cast_examples() {
         22
     );
 
-    let diamond_trait: &dyn AsMixedExampleDiamond = &diamond;
+    let diamond_trait: &dyn AsClass<MixedExampleDiamond> = &diamond;
     assert_eq!(
         diamond_trait
             .as_base_via::<MixedExampleVirtualBranch, MixedExampleRoot>()
@@ -650,20 +651,20 @@ fn mixed_inheritance_path_cast_examples() {
         22
     );
 
-    let root: Box<dyn AsMixedExampleRoot> = Box::new(MixedExampleDiamond::new())
-        .into_base_via::<MixedExampleConcreteBranch, dyn AsMixedExampleRoot>(
+    let root: Box<dyn AsClass<MixedExampleRoot>> = Box::new(MixedExampleDiamond::new())
+        .into_base_via::<MixedExampleConcreteBranch, dyn AsClass<MixedExampleRoot>>(
     );
     assert_eq!(root.as_base::<MixedExampleRoot>().value(), 2);
 
-    let root = match root.downcast::<dyn AsMixedExampleVirtualBranch>() {
+    let root = match root.downcast::<dyn AsClass<MixedExampleVirtualBranch>>() {
         Ok(_) => panic!("concrete root path should not downcast to virtual branch"),
         Err(root) => root,
     };
-    let concrete = match root.downcast::<dyn AsMixedExampleConcreteBranch>() {
+    let concrete = match root.downcast::<dyn AsClass<MixedExampleConcreteBranch>>() {
         Ok(concrete) => concrete,
         Err(_) => panic!("concrete root path should downcast to concrete branch"),
     };
-    let diamond = match concrete.downcast::<dyn AsMixedExampleDiamond>() {
+    let diamond = match concrete.downcast::<dyn AsClass<MixedExampleDiamond>>() {
         Ok(diamond) => diamond,
         Err(_) => panic!("concrete branch should downcast to complete diamond"),
     };
@@ -675,16 +676,16 @@ fn mixed_inheritance_path_cast_examples() {
         2
     );
 
-    let root: Box<dyn AsMixedExampleRoot> = Box::new(MixedExampleDiamond::new())
-        .into_base_via::<MixedExampleVirtualBranch, dyn AsMixedExampleRoot>(
+    let root: Box<dyn AsClass<MixedExampleRoot>> = Box::new(MixedExampleDiamond::new())
+        .into_base_via::<MixedExampleVirtualBranch, dyn AsClass<MixedExampleRoot>>(
     );
     assert_eq!(root.as_base::<MixedExampleRoot>().value(), 10);
 
-    let root = match root.downcast::<dyn AsMixedExampleConcreteBranch>() {
+    let root = match root.downcast::<dyn AsClass<MixedExampleConcreteBranch>>() {
         Ok(_) => panic!("virtual root path should not downcast to concrete branch"),
         Err(root) => root,
     };
-    let virtual_branch = match root.downcast::<dyn AsMixedExampleVirtualBranch>() {
+    let virtual_branch = match root.downcast::<dyn AsClass<MixedExampleVirtualBranch>>() {
         Ok(virtual_branch) => virtual_branch,
         Err(_) => panic!("virtual root path should downcast to virtual branch"),
     };
@@ -734,8 +735,8 @@ fn job_factory_examples() -> JobFactory {
 
 fn job_factory_downcast_example(job_factory: JobFactory) {
     // checked downcast
-    let factory: Box<dyn AsFactory<Job>> = Box::new(job_factory);
-    let factory_downcast_result = factory.downcast::<dyn AsJobFactory>();
+    let factory: Box<dyn AsClass<Factory<Job>>> = Box::new(job_factory);
+    let factory_downcast_result = factory.downcast::<dyn AsClass<JobFactory>>();
     match factory_downcast_result {
         Ok(mut job_factory_downcast) => {
             println!("downcasted to job_factory");

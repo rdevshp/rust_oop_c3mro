@@ -12,7 +12,7 @@ use crate::generics::{
     substitutions_from_context, GenericSubstitutions,
 };
 use crate::model::{Graph, MethodInfo};
-use crate::names::{base_cast_trait_ident, vtable_ident};
+use crate::names::vtable_ident;
 
 pub(crate) fn class_type(class: &ClassDef) -> Type {
     let name = &class.name;
@@ -101,12 +101,8 @@ pub(crate) fn vtable_type_for_actual_class(
     type_with_replaced_ident(actual, vtable_ident(&graph.names[class_index]))
 }
 
-pub(crate) fn base_cast_trait_for_actual_class(
-    graph: &Graph,
-    class_index: usize,
-    actual: &Type,
-) -> TokenStream2 {
-    type_with_replaced_ident(actual, base_cast_trait_ident(&graph.names[class_index]))
+pub(crate) fn as_class_trait_for_actual(actual: &Type) -> TokenStream2 {
+    quote! { ::oop_mro::AsClass<#actual> }
 }
 
 pub(crate) fn type_with_replaced_ident(ty: &Type, ident: Ident) -> TokenStream2 {

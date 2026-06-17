@@ -57,7 +57,7 @@ fn main() {
     assert_eq!(dog.as_base::<Animal>().speak(), "woof");
     assert_eq!(dog.as_base::<Walker>().legs(), 4);
 
-    let animal: Box<dyn AsAnimal> = Box::new(Dog::default());
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Dog::default());
     assert_eq!(animal.as_base::<Animal>().speak(), "woof");
 
     let mut derived = Derived::default();
@@ -67,7 +67,7 @@ fn main() {
     let repository = MemoryRepository::new(String::from("stored"));
     assert_eq!(repository.as_base::<Repository<String>>().current(), "stored");
 
-    let owned: Box<dyn AsRepository<String>> =
+    let owned: Box<dyn AsClass<Repository<String>>> =
         Box::new(MemoryRepository::new(String::from("boxed")));
     assert_eq!(owned.as_base::<Repository<String>>().current(), "boxed");
 }

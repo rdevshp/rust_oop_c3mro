@@ -16,6 +16,28 @@ pub trait OopObject {
     type Class: OopClass;
 }
 
+/// # Safety
+///
+/// Implementations must be generated from a valid `oop_class!` graph. The
+/// returned self reference, complete class id, source subobject id, and owned
+/// complete-object pointer must all describe the same represented subobject.
+pub unsafe trait AsClass<Target> {
+    #[doc(hidden)]
+    fn __oop_as_self(&self) -> &Target;
+
+    #[doc(hidden)]
+    fn __oop_as_self_mut(&mut self) -> &mut Target;
+
+    #[doc(hidden)]
+    fn __oop_complete_class_id(&self) -> usize;
+
+    #[doc(hidden)]
+    fn __oop_source_subobject_id(&self) -> usize;
+
+    #[doc(hidden)]
+    fn __oop_into_complete_owned(self: Box<Self>) -> *mut ();
+}
+
 pub trait OopBase<Target> {
     #[doc(hidden)]
     fn __oop_as_base(&self) -> &Target;
@@ -37,12 +59,46 @@ where
     }
 }
 
+impl<Source, Target> OopBase<Target> for dyn AsClass<Source> + '_
+where
+    Source: OopBase<Target>,
+{
+    fn __oop_as_base(&self) -> &Target {
+        <Source as OopBase<Target>>::__oop_as_base(
+            <dyn AsClass<Source> as AsClass<Source>>::__oop_as_self(self),
+        )
+    }
+
+    fn __oop_as_base_mut(&mut self) -> &mut Target {
+        <Source as OopBase<Target>>::__oop_as_base_mut(
+            <dyn AsClass<Source> as AsClass<Source>>::__oop_as_self_mut(self),
+        )
+    }
+}
+
 pub trait OopBaseVia<Via, Target> {
     #[doc(hidden)]
     fn __oop_as_base_via(&self) -> &Target;
 
     #[doc(hidden)]
     fn __oop_as_base_via_mut(&mut self) -> &mut Target;
+}
+
+impl<Source, Via, Target> OopBaseVia<Via, Target> for dyn AsClass<Source> + '_
+where
+    Source: OopBaseVia<Via, Target>,
+{
+    fn __oop_as_base_via(&self) -> &Target {
+        <Source as OopBaseVia<Via, Target>>::__oop_as_base_via(<dyn AsClass<Source> as AsClass<
+            Source,
+        >>::__oop_as_self(self))
+    }
+
+    fn __oop_as_base_via_mut(&mut self) -> &mut Target {
+        <Source as OopBaseVia<Via, Target>>::__oop_as_base_via_mut(
+            <dyn AsClass<Source> as AsClass<Source>>::__oop_as_self_mut(self),
+        )
+    }
 }
 
 pub trait OopBaseAccess {
@@ -80,6 +136,21 @@ impl<T: ?Sized> OopBaseAccess for T {}
 pub trait OopBoxBaseVia<Via, Target: ?Sized> {
     #[doc(hidden)]
     fn __oop_into_base_via(self: Box<Self>) -> Box<Target>;
+}
+
+pub trait OopDynBoxBaseVia<Via, Target>: Sized {
+    #[doc(hidden)]
+    fn __oop_dyn_into_base_via(source: Box<dyn AsClass<Self>>) -> Box<dyn AsClass<Target>>;
+}
+
+impl<Source, Via, Target> OopBoxBaseVia<Via, dyn AsClass<Target>> for dyn AsClass<Source>
+where
+    Source: OopDynBoxBaseVia<Via, Target> + 'static,
+    Target: 'static,
+{
+    fn __oop_into_base_via(self: Box<Self>) -> Box<dyn AsClass<Target>> {
+        <Source as OopDynBoxBaseVia<Via, Target>>::__oop_dyn_into_base_via(self)
+    }
 }
 
 pub trait OopBoxBaseAccess {
@@ -136,6 +207,25 @@ impl<T: ?Sized> OopBoxDowncast for T {}
 
 pub trait OopBoxDowncastTarget<Target: ?Sized> {
     fn downcast_target(self: Box<Self>) -> Result<Box<Target>, Box<Self>>;
+}
+
+pub trait OopDynBoxDowncast<Target>: Sized {
+    #[doc(hidden)]
+    fn __oop_dyn_downcast(
+        source: Box<dyn AsClass<Self>>,
+    ) -> Result<Box<dyn AsClass<Target>>, Box<dyn AsClass<Self>>>;
+}
+
+impl<Source, Target> OopBoxDowncastTarget<dyn AsClass<Target>> for dyn AsClass<Source>
+where
+    Source: OopDynBoxDowncast<Target> + 'static,
+    Target: 'static,
+{
+    fn downcast_target(
+        self: Box<Self>,
+    ) -> Result<Box<dyn AsClass<Target>>, Box<dyn AsClass<Source>>> {
+        <Source as OopDynBoxDowncast<Target>>::__oop_dyn_downcast(self)
+    }
 }
 
 pub type MethodFn = fn();
@@ -231,10 +321,10 @@ impl<T> Drop for VirtualBaseSlot<T> {
 
 pub mod prelude {
     pub use crate::{
-        oop_class, super_call, MethodEntry, MethodFn, MethodTable, OopBase, OopBaseAccess,
+        oop_class, super_call, AsClass, MethodEntry, MethodFn, MethodTable, OopBase, OopBaseAccess,
         OopBaseVia, OopBoxBaseAccess, OopBoxBaseVia, OopBoxDowncast, OopBoxDowncastTarget,
         OopClass, OopDowncastMut, OopDowncastMutTarget, OopDowncastRef, OopDowncastRefTarget,
-        OopObject,
+        OopDynBoxBaseVia, OopDynBoxDowncast, OopObject,
     };
 }
 

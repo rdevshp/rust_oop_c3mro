@@ -47,9 +47,9 @@ oop_class! {
 fn main() {
     let repository = MemoryRepository::new(String::from("stored"));
     let base: &Repository<String> = repository.as_base::<Repository<String>>();
-    let owned: Vec<Box<dyn AsRepository<String>>> =
+    let owned: Vec<Box<dyn AsClass<Repository<String>>>> =
         vec![Box::new(MemoryRepository::new(String::from("boxed")))];
-    let upcast: Box<dyn AsRepository<String>> =
+    let upcast: Box<dyn AsClass<Repository<String>>> =
         Box::new(MemoryRepository::new(String::from("upcast")));
     let array = ArrayHolder::<u8, 4>::default();
     let const_leaf = ConstLeaf::<4>::default();

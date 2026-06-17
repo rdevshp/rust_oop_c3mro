@@ -7,7 +7,7 @@ oop_class! {
     class Diamond: Left, Right {}
 }
 
-fn require_root<T: AsRoot>(_: &T) {}
+fn require_root<T: AsClass<Root>>(_: &T) {}
 
 fn main() {
     let diamond = Diamond::default();

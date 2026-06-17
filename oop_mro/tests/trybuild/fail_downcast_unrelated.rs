@@ -22,6 +22,6 @@ oop_class! {
 }
 
 fn main() {
-    let animal: Box<dyn AsAnimal> = Box::new(Dog::default());
-    let _ = animal.downcast::<dyn AsVehicle>();
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Dog::default());
+    let _ = animal.downcast::<dyn AsClass<Vehicle>>();
 }

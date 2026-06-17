@@ -74,28 +74,28 @@ oop_class! {
 }
 
 fn main() {
-    let animal: Box<dyn AsAnimal> = Box::new(Dog::default());
-    let mammal = match animal.downcast::<dyn AsMammal>() {
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Dog::default());
+    let mammal = match animal.downcast::<dyn AsClass<Mammal>>() {
         Ok(mammal) => mammal,
         Err(_) => panic!("Dog should downcast to Mammal"),
     };
     assert_eq!(mammal.as_base::<Mammal>().speak(), "woof");
 
-    let dog = match mammal.downcast::<dyn AsDog>() {
+    let dog = match mammal.downcast::<dyn AsClass<Dog>>() {
         Ok(dog) => dog,
         Err(_) => panic!("Dog should downcast to Dog"),
     };
     assert_eq!(dog.as_base::<Dog>().speak(), "woof");
 
-    let animal: Box<dyn AsAnimal> = Box::new(Cat::default());
-    let animal = match animal.downcast::<dyn AsDog>() {
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Cat::default());
+    let animal = match animal.downcast::<dyn AsClass<Dog>>() {
         Ok(_) => panic!("Cat should not downcast to Dog"),
         Err(animal) => animal,
     };
     assert_eq!(animal.as_base::<Animal>().speak(), "meow");
 
-    let walker: Box<dyn AsWalker> = Box::new(Kangaroo::default());
-    let kangaroo = match walker.downcast::<dyn AsKangaroo>() {
+    let walker: Box<dyn AsClass<Walker>> = Box::new(Kangaroo::default());
+    let kangaroo = match walker.downcast::<dyn AsClass<Kangaroo>>() {
         Ok(kangaroo) => kangaroo,
         Err(_) => panic!("Kangaroo should downcast from Walker"),
     };
@@ -115,8 +115,8 @@ fn main() {
         11
     );
 
-    let slot: Box<dyn AsSlot<String>> = Box::new(Leaf::new("value".to_string()));
-    let leaf = match slot.downcast::<dyn AsLeaf<String>>() {
+    let slot: Box<dyn AsClass<Slot<String>>> = Box::new(Leaf::new("value".to_string()));
+    let leaf = match slot.downcast::<dyn AsClass<Leaf<String>>>() {
         Ok(leaf) => leaf,
         Err(_) => panic!("Slot should downcast to Leaf"),
     };

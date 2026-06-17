@@ -670,30 +670,30 @@ fn base_references_dispatch_inherited_and_mutable_virtual_methods() {
 
 #[test]
 fn owned_base_trait_objects_can_target_inherited_interfaces() {
-    let animal: Box<dyn AsAnimal> = Box::new(Dog::default());
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Dog::default());
     assert_eq!(animal.as_base::<Animal>().speak(), "woof -> generic");
 
-    let walker: Box<dyn AsWalker> = Box::new(Dog::default());
+    let walker: Box<dyn AsClass<Walker>> = Box::new(Dog::default());
     assert_eq!(walker.as_base::<Walker>().walk(), "walking");
 }
 
 #[test]
 fn owned_base_trait_objects_downcast_through_inheritance() {
-    let animal: Box<dyn AsAnimal> = Box::new(Kangaroo::default());
-    let mammal = match animal.downcast::<dyn AsMammal>() {
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Kangaroo::default());
+    let mammal = match animal.downcast::<dyn AsClass<Mammal>>() {
         Ok(mammal) => mammal,
         Err(_) => panic!("kangaroo should downcast from Animal to Mammal"),
     };
     assert_eq!(mammal.as_base::<Mammal>().speak(), "chuff");
 
-    let kangaroo = match mammal.downcast::<dyn AsKangaroo>() {
+    let kangaroo = match mammal.downcast::<dyn AsClass<Kangaroo>>() {
         Ok(kangaroo) => kangaroo,
         Err(_) => panic!("kangaroo should downcast from Mammal to Kangaroo"),
     };
     assert_eq!(kangaroo.as_base::<Kangaroo>().walk(), "walking");
 
-    let walker: Box<dyn AsWalker> = Box::new(Kangaroo::default());
-    let kangaroo = match walker.downcast::<dyn AsKangaroo>() {
+    let walker: Box<dyn AsClass<Walker>> = Box::new(Kangaroo::default());
+    let kangaroo = match walker.downcast::<dyn AsClass<Kangaroo>>() {
         Ok(kangaroo) => kangaroo,
         Err(_) => panic!("kangaroo should downcast from Walker to Kangaroo"),
     };
@@ -702,8 +702,8 @@ fn owned_base_trait_objects_downcast_through_inheritance() {
 
 #[test]
 fn failed_owned_downcast_preserves_original_box() {
-    let animal: Box<dyn AsAnimal> = Box::new(Cat::default());
-    let animal = match animal.downcast::<dyn AsDog>() {
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Cat::default());
+    let animal = match animal.downcast::<dyn AsClass<Dog>>() {
         Ok(_) => panic!("cat should not downcast to Dog"),
         Err(animal) => animal,
     };
@@ -788,9 +788,9 @@ fn borrowed_downcast_follows_the_receiver_inheritance_path() {
 #[test]
 fn owned_downcast_follows_the_receiver_inheritance_path() {
     let diamond: Box<DowncastPathDiamond> = Box::new(DowncastPathDiamond::new());
-    let root: Box<dyn AsDowncastPathRoot> =
-        diamond.into_base_via::<DowncastPathLeft, dyn AsDowncastPathRoot>();
-    let left = match root.downcast::<dyn AsDowncastPathLeft>() {
+    let root: Box<dyn AsClass<DowncastPathRoot>> =
+        diamond.into_base_via::<DowncastPathLeft, dyn AsClass<DowncastPathRoot>>();
+    let left = match root.downcast::<dyn AsClass<DowncastPathLeft>>() {
         Ok(left) => left,
         Err(_) => panic!("left root should downcast to left"),
     };
@@ -802,13 +802,13 @@ fn owned_downcast_follows_the_receiver_inheritance_path() {
     );
 
     let diamond: Box<DowncastPathDiamond> = Box::new(DowncastPathDiamond::new());
-    let root: Box<dyn AsDowncastPathRoot> =
-        diamond.into_base_via::<DowncastPathLeft, dyn AsDowncastPathRoot>();
-    let root = match root.downcast::<dyn AsDowncastPathRight>() {
+    let root: Box<dyn AsClass<DowncastPathRoot>> =
+        diamond.into_base_via::<DowncastPathLeft, dyn AsClass<DowncastPathRoot>>();
+    let root = match root.downcast::<dyn AsClass<DowncastPathRight>>() {
         Ok(_) => panic!("left root should not downcast to right"),
         Err(root) => root,
     };
-    let diamond = match root.downcast::<dyn AsDowncastPathDiamond>() {
+    let diamond = match root.downcast::<dyn AsClass<DowncastPathDiamond>>() {
         Ok(diamond) => diamond,
         Err(_) => panic!("left root should downcast to complete diamond"),
     };
@@ -922,10 +922,11 @@ fn supports_async_direct_and_virtual_methods() {
 #[test]
 fn supports_generic_classes_and_base_views() {
     let leaf = GenericLeaf::new("leaf".to_string());
-    let slots: Vec<Box<dyn AsGenericSlot<String>>> =
+    let slots: Vec<Box<dyn AsClass<GenericSlot<String>>>> =
         vec![Box::new(GenericLeaf::new("boxed".to_string()))];
-    let slot: Box<dyn AsGenericSlot<String>> = Box::new(GenericLeaf::new("downcast".to_string()));
-    let leaf_box = match slot.downcast::<dyn AsGenericLeaf<String>>() {
+    let slot: Box<dyn AsClass<GenericSlot<String>>> =
+        Box::new(GenericLeaf::new("downcast".to_string()));
+    let leaf_box = match slot.downcast::<dyn AsClass<GenericLeaf<String>>>() {
         Ok(leaf) => leaf,
         Err(_) => panic!("generic slot should downcast to GenericLeaf"),
     };
@@ -953,7 +954,7 @@ fn target_explicit_as_base_casts_to_unambiguous_bases() {
     assert_eq!(dog.as_base::<Walker>().walk(), "walking");
     assert_eq!(dog.as_base_mut::<Animal>().kingdom(), "animalia");
 
-    let animal: Box<dyn AsAnimal> = Box::new(Dog::default());
+    let animal: Box<dyn AsClass<Animal>> = Box::new(Dog::default());
     assert_eq!(animal.as_base::<Animal>().speak(), "woof -> generic");
 
     let mut loud_counter = LoudCounter::default();
@@ -962,7 +963,8 @@ fn target_explicit_as_base_casts_to_unambiguous_bases() {
     let leaf = GenericLeaf::new("leaf".to_string());
     assert_eq!(leaf.as_base::<GenericSlot<String>>().get(), "leaf");
 
-    let slot: Box<dyn AsGenericSlot<String>> = Box::new(GenericLeaf::new("boxed".to_string()));
+    let slot: Box<dyn AsClass<GenericSlot<String>>> =
+        Box::new(GenericLeaf::new("boxed".to_string()));
     assert_eq!(slot.as_base::<GenericSlot<String>>().get(), "boxed");
 }
 
@@ -1048,8 +1050,8 @@ fn virtual_diamond_shares_base_storage_and_dispatch() {
 
     assert_eq!(VIRTUAL_OBJECT_DROPS.load(Ordering::SeqCst), 1);
 
-    let boxed: Box<dyn AsVirtualObject> = Box::new(VirtualDiamond::new());
-    let boxed = match boxed.downcast::<dyn AsVirtualDiamond>() {
+    let boxed: Box<dyn AsClass<VirtualObject>> = Box::new(VirtualDiamond::new());
+    let boxed = match boxed.downcast::<dyn AsClass<VirtualDiamond>>() {
         Ok(boxed) => boxed,
         Err(_) => panic!("virtual object box should downcast to complete diamond"),
     };
@@ -1134,7 +1136,7 @@ fn mixed_virtual_and_non_virtual_paths_create_distinct_base_subobjects() {
         22
     );
 
-    let diamond_trait: &dyn AsMixedDiamond = &diamond;
+    let diamond_trait: &dyn AsClass<MixedDiamond> = &diamond;
     assert_eq!(
         diamond_trait
             .as_base_via::<MixedVirtualLeft, MixedRoot>()
@@ -1172,7 +1174,7 @@ fn via_type_selects_specific_subobject() {
     assert_eq!(diamond.as_base_via::<PathLeft, PathRoot>().value(), 11);
     assert_eq!(diamond.as_base_via::<PathRight, PathRoot>().value(), 17);
 
-    let branch_trait: &dyn AsPathBranch = diamond.as_base::<PathBranch>();
+    let branch_trait: &dyn AsClass<PathBranch> = diamond.as_base::<PathBranch>();
     assert_eq!(branch_trait.as_base_via::<PathLeft, PathRoot>().value(), 11,);
 }
 
@@ -1200,15 +1202,15 @@ fn via_type_uses_actual_generic_specialization() {
 #[test]
 fn owned_via_upcasts_preserve_selected_subobject() {
     let concrete_root =
-        Box::new(MixedDiamond::new()).into_base_via::<MixedVirtualLeft, dyn AsMixedRoot>();
+        Box::new(MixedDiamond::new()).into_base_via::<MixedVirtualLeft, dyn AsClass<MixedRoot>>();
     assert_eq!(concrete_root.as_base::<MixedRoot>().value(), 10);
 
-    let boxed: Box<dyn AsMixedDiamond> = Box::new(MixedDiamond::new());
-    let root = boxed.into_base_via::<MixedConcreteRight, dyn AsMixedRoot>();
+    let boxed: Box<dyn AsClass<MixedDiamond>> = Box::new(MixedDiamond::new());
+    let root = boxed.into_base_via::<MixedConcreteRight, dyn AsClass<MixedRoot>>();
 
     assert_eq!(root.as_base::<MixedRoot>().value(), 2);
 
-    let diamond = match root.downcast::<dyn AsMixedDiamond>() {
+    let diamond = match root.downcast::<dyn AsClass<MixedDiamond>>() {
         Ok(diamond) => diamond,
         Err(_) => panic!("path-owned MixedRoot should downcast back to MixedDiamond"),
     };
@@ -1223,8 +1225,8 @@ fn owned_via_upcasts_preserve_selected_subobject() {
 
 #[test]
 fn owned_via_upcasts_support_tuple_paths() {
-    let boxed: Box<dyn AsPathDiamond> = Box::new(PathDiamond::new());
-    let root = boxed.into_base_via::<(PathBranch, PathRight), dyn AsPathRoot>();
+    let boxed: Box<dyn AsClass<PathDiamond>> = Box::new(PathDiamond::new());
+    let root = boxed.into_base_via::<(PathBranch, PathRight), dyn AsClass<PathRoot>>();
 
     assert_eq!(root.as_base::<PathRoot>().value(), 17);
 }
@@ -1232,33 +1234,33 @@ fn owned_via_upcasts_support_tuple_paths() {
 #[test]
 fn owned_via_upcast_from_path_owned_dyn_source_preserves_source_subobject() {
     let diamond: Box<OwnedViaDynDiamond> = Box::new(OwnedViaDynDiamond::new());
-    let branch: Box<dyn AsOwnedViaDynBranch> =
-        diamond.into_base_via::<OwnedViaDynTopRight, dyn AsOwnedViaDynBranch>();
-    let root = branch.into_base_via::<OwnedViaDynLeft, dyn AsOwnedViaDynRoot>();
+    let branch: Box<dyn AsClass<OwnedViaDynBranch>> =
+        diamond.into_base_via::<OwnedViaDynTopRight, dyn AsClass<OwnedViaDynBranch>>();
+    let root = branch.into_base_via::<OwnedViaDynLeft, dyn AsClass<OwnedViaDynRoot>>();
 
     assert_eq!(root.as_base::<OwnedViaDynRoot>().value(), 20);
 
     let diamond: Box<OwnedViaDynDiamond> = Box::new(OwnedViaDynDiamond::new());
-    let branch: Box<dyn AsOwnedViaDynBranch> =
-        diamond.into_base_via::<OwnedViaDynTopLeft, dyn AsOwnedViaDynBranch>();
-    let root = branch.into_base_via::<OwnedViaDynRight, dyn AsOwnedViaDynRoot>();
+    let branch: Box<dyn AsClass<OwnedViaDynBranch>> =
+        diamond.into_base_via::<OwnedViaDynTopLeft, dyn AsClass<OwnedViaDynBranch>>();
+    let root = branch.into_base_via::<OwnedViaDynRight, dyn AsClass<OwnedViaDynRoot>>();
 
     assert_eq!(root.as_base::<OwnedViaDynRoot>().value(), 11);
 }
 
 #[test]
 fn owned_via_upcasts_use_actual_generic_specialization() {
-    let boxed: Box<dyn AsGenericViaDiamond> = Box::new(GenericViaDiamond::new());
-    let root = boxed.into_base_via::<GenericViaBase<String>, dyn AsGenericViaRoot>();
+    let boxed: Box<dyn AsClass<GenericViaDiamond>> = Box::new(GenericViaDiamond::new());
+    let root = boxed.into_base_via::<GenericViaBase<String>, dyn AsClass<GenericViaRoot>>();
 
     assert_eq!(root.as_base::<GenericViaRoot>().label(), "right");
 }
 
 #[test]
 fn failed_owned_via_downcast_preserves_original_box() {
-    let boxed: Box<dyn AsMixedDiamond> = Box::new(MixedDiamond::new());
-    let root = boxed.into_base_via::<MixedVirtualLeft, dyn AsMixedRoot>();
-    let root = match root.downcast::<dyn AsMixedOther>() {
+    let boxed: Box<dyn AsClass<MixedDiamond>> = Box::new(MixedDiamond::new());
+    let root = boxed.into_base_via::<MixedVirtualLeft, dyn AsClass<MixedRoot>>();
+    let root = match root.downcast::<dyn AsClass<MixedOther>>() {
         Ok(_) => panic!("MixedDiamond should not downcast to MixedOther"),
         Err(root) => root,
     };
@@ -1295,8 +1297,8 @@ fn virtual_generic_specializations_are_distinct_bases() {
     assert_eq!(left.as_base::<SpecializedSlot<i32>>().label(), "int");
     assert_eq!(right.as_base::<SpecializedSlot<String>>().label(), "string");
 
-    let slot: Box<dyn AsSpecializedSlot<String>> = Box::new(SpecializedDiamond::new());
-    let right = match slot.downcast::<dyn AsSpecializedRight>() {
+    let slot: Box<dyn AsClass<SpecializedSlot<String>>> = Box::new(SpecializedDiamond::new());
+    let right = match slot.downcast::<dyn AsClass<SpecializedRight>>() {
         Ok(right) => right,
         Err(_) => panic!("String slot should owned-downcast to SpecializedRight"),
     };

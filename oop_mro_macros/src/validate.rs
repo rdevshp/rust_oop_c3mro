@@ -41,18 +41,6 @@ pub(crate) fn validate_and_build(block: OopBlock, errors: &mut Vec<Error>) -> Gr
         names.push(name);
     }
 
-    for class in &classes {
-        let cast_name = format!("As{}", class.name);
-        if name_to_index.contains_key(&cast_name) {
-            errors.push(Error::new_spanned(
-                &class.name,
-                format!(
-                    "generated base-cast trait name `{cast_name}` conflicts with an existing class name"
-                ),
-            ));
-        }
-    }
-
     let mut bases = vec![Vec::new(); classes.len()];
     let mut base_edges = vec![Vec::new(); classes.len()];
     for (index, class) in classes.iter().enumerate() {

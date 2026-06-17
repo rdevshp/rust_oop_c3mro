@@ -92,8 +92,8 @@ fn generate_box_downcast_impl(
     let mut generics = class.generics.clone();
     add_static_type_param_bounds(&mut generics);
     let (impl_generics, _, where_clause) = generics.split_for_impl();
-    let source_trait = base_cast_trait_for_actual_class(graph, source, source_ty);
-    let target_trait = base_cast_trait_for_actual_class(graph, target, target_ty);
+    let source_trait = as_class_trait_for_actual(source_ty);
+    let target_trait = as_class_trait_for_actual(target_ty);
     let mut wrapper_items = Vec::new();
     let arms = candidates
         .iter()
@@ -121,7 +121,7 @@ fn generate_box_downcast_impl(
             let wrapper_expr_generics = wrapper_ty_generics.as_turbofish();
             quote! {
                 (#complete, #source_id) => {
-                    let data = <dyn #source_trait as #source_trait>::__oop_into_complete_owned(self);
+                    let data = <dyn #source_trait as #source_trait>::__oop_into_complete_owned(source);
                     let complete = unsafe {
                         ::std::boxed::Box::from_raw(data as *mut #complete_ty)
                     };
@@ -136,21 +136,21 @@ fn generate_box_downcast_impl(
     quote! {
         #(#wrapper_items)*
 
-        impl #impl_generics ::oop_mro::OopBoxDowncastTarget<dyn #target_trait>
-            for dyn #source_trait
+        impl #impl_generics ::oop_mro::OopDynBoxDowncast<#target_ty>
+            for #source_ty
             #where_clause
         {
-            fn downcast_target(
-                self: ::std::boxed::Box<Self>,
+            fn __oop_dyn_downcast(
+                source: ::std::boxed::Box<dyn #source_trait>,
             ) -> ::core::result::Result<
                 ::std::boxed::Box<dyn #target_trait>,
-                ::std::boxed::Box<Self>,
+                ::std::boxed::Box<dyn #source_trait>,
             > {
-                let complete_id = <dyn #source_trait as #source_trait>::__oop_complete_class_id(&*self);
-                let source_id = <dyn #source_trait as #source_trait>::__oop_source_subobject_id(&*self);
+                let complete_id = <dyn #source_trait as #source_trait>::__oop_complete_class_id(&*source);
+                let source_id = <dyn #source_trait as #source_trait>::__oop_source_subobject_id(&*source);
                 match (complete_id, source_id) {
                     #(#arms,)*
-                    _ => ::core::result::Result::Err(self),
+                    _ => ::core::result::Result::Err(source),
                 }
             }
         }
@@ -288,15 +288,13 @@ fn generate_owned_downcast_wrapper(
     let (impl_generics, wrapper_ty_generics, where_clause) =
         complete_class.generics.split_for_impl();
     let wrapper_ty = quote! { #wrapper #wrapper_ty_generics };
-    let private_module = private_module_ident(graph);
     let trait_impls = ancestor_views(graph, target_index)
         .into_iter()
         .map(|trait_view| {
-            let trait_index = trait_view.class_index;
             let mut full_path = target_path.to_vec();
             full_path.extend(trait_view.path);
             let trait_actual = ancestor_type_for_path(graph, complete_index, &full_path);
-            let trait_path = base_cast_trait_for_actual_class(graph, trait_index, &trait_actual);
+            let trait_path = as_class_trait_for_actual(&trait_actual);
             let shared_body = static_ref_expr_for_path(
                 graph,
                 complete_index,
@@ -326,7 +324,7 @@ fn generate_owned_downcast_wrapper(
                     }
                 }
 
-                impl #impl_generics #trait_path for #wrapper_ty #where_clause {
+                unsafe impl #impl_generics #trait_path for #wrapper_ty #where_clause {
                     fn __oop_as_self(&self) -> &#trait_actual {
                         #shared_body
                     }
@@ -346,10 +344,6 @@ fn generate_owned_downcast_wrapper(
                     fn __oop_into_complete_owned(self: ::std::boxed::Box<Self>) -> *mut () {
                         let #wrapper { complete } = *self;
                         ::std::boxed::Box::into_raw(complete) as *mut ()
-                    }
-
-                    fn __oop_cast_seal(&self) -> #private_module::Seal {
-                        #private_module::Seal
                     }
                 }
             }

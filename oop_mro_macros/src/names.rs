@@ -11,14 +11,6 @@ pub(crate) fn virtual_base_field_ident(name: &str) -> Ident {
     format_ident!("__oop_vbase_{}", to_snake(name))
 }
 
-pub(crate) fn base_cast_trait_ident(name: &str) -> Ident {
-    format_ident!("As{}", name)
-}
-
-pub(crate) fn private_module_ident(graph: &Graph) -> Ident {
-    format_ident!("__oop_private_{}", graph.names[0])
-}
-
 pub(crate) fn default_base_trait_ident(name: &str) -> Ident {
     format_ident!("__oop_DefaultBase_{}", name)
 }
